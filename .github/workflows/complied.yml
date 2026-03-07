@@ -1,0 +1,28 @@
+name: 编译 TrustdSpoofer.dylib
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v3
+      
+    - name: 编译 dylib
+      run: |
+        clang -dynamiclib \
+              -arch arm64 \
+              -framework Security \
+              -framework Foundation \
+              -o TrustdSpoofer.dylib \
+              TrustdSpoofer.c
+              
+    - name: 上传编译产物
+      uses: actions/upload-artifact@v3
+      with:
+        name: TrustdSpoofer.dylib
+        path: TrustdSpoofer.dylib
