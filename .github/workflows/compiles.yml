@@ -1,0 +1,52 @@
+name: 编译 TrustdSpoofer.dylib
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号'
+        required: false
+        default: '1.0'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    name: 编译 dylib
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v3
+      
+    - name: 设置编译环境
+      run: |
+        echo "开始编译..."
+        xcode-select --print-path
+        
+    - name: 编译 dylib
+      run: |
+        clang -dynamiclib \
+              -arch arm64 \
+              -arch arm64e \
+              -framework Security \
+              -framework Foundation \
+              -o TrustdSpoofer.dylib \
+              TrustdSpoofer.c
+              
+    - name: 查看编译结果
+      run: |
+        file TrustdSpoofer.dylib
+        ls -lh TrustdSpoofer.dylib
+        
+    - name: 上传编译产物
+      uses: actions/upload-artifact@v3
+      with:
+        name: TrustdSpoofer.dylib
+        path: TrustdSpoofer.dylib
+        
+    - name: 创建 Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: TrustdSpoofer.dylib
