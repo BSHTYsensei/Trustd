@@ -12,10 +12,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Theos and SDK
+      - name: Install Theos and SDK locally
         run: |
-          export THEOS=~/theos
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          export THEOS=$HOME/theos
+          git clone --recursive https://github.com/theos/theos.git $THEOS
           mkdir -p $THEOS/sdks
           cd $THEOS/sdks
           curl -L -o iPhoneOS16.5.sdk.tar.xz https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
@@ -41,29 +41,78 @@ jobs:
 
       - name: Fix Swift WIFEXITED/WEXITSTATUS macros
         run: |
-          sed -i '' '1i\
-          import Darwin\
-          func WIFEXITED(_ status: Int32) -> Bool { return (status & 0x7f) == 0 }\
+          python3 -c "
+          patch = '''import Darwin
+          func WIFEXITED(_ status: Int32) -> Bool { return (status & 0x7f) == 0 }
           func WEXITSTATUS(_ status: Int32) -> Int32 { return (status >> 8) & 0xff }
-          ' project/CodeSigningInstaller.swift project/SettingsView.swift
+          '''
+          import glob
+          for f in glob.glob('project/*.swift'):
+              with open(f, 'r') as file:
+                  content = file.read()
+              if 'WIFEXITED' in content and 'func WIFEXITED' not in content:
+                  with open(f, 'w') as file:
+                      file.write(patch + content)
+          "
 
-      - name: Create Makefile
+      - name: Create Makefile and Entry Point
         run: |
-          cat << 'EOF' > project/Makefile
-          ARCHS = arm64
+          python3 -c "
+          makefile_content = '''ARCHS = arm64
           TARGET = iphone:clang:16.5:15.0
           INSTALL_TARGET_PROCESS = TrollStore
-          include $(THEOS)/makefiles/common.mk
+          include \$(THEOS)/makefiles/common.mk
           APPLICATION_NAME = TrollStore
-          TrollStore_FILES = CodeSigningInstaller.swift AppListView.swift SettingsView.swift AppManager.swift
+          TrollStore_FILES = TrollStoreApp.swift CodeSigningInstaller.swift AppListView.swift SettingsView.swift AppManager.swift
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics
-          TrollStore_CFLAGS = -fmodules -fcxx-modules
           TrollStore_SWIFTFLAGS = -target arm64-apple-ios15.0
-          TrollStore_LDFLAGS = -rpath @executable_path/
           TrollStore_RESOURCE_DIRS = Resources
-          include $(THEOS_MAKE_PATH)/application.mk
-          EOF
-          printf '\nafter-stage::\n\tcp ldid $(THEOS_STAGING_DIR)/Applications/TrollStore.app/\n\tcp trollstorehelper $(THEOS_STAGING_DIR)/Applications/TrollStore.app/\n\tcp TrollHelper $(THEOS_STAGING_DIR)/Applications/TrollStore.app/ || true\n\tchmod 755 $(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid\n\tchmod 755 $(THEOS_STAGING_DIR)/Applications/TrollStore.app/trollstorehelper\n\tchmod 755 $(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollHelper || true\n\t$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollStore\n\t$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/trollstorehelper\n\t$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid\n\t$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollHelper || true\n\trm -f $(THEOS_STAGING_DIR)/Applications/TrollStore.app/entitlements.plist\n' >> project/Makefile
+          include \$(THEOS_MAKE_PATH)/application.mk
+
+          after-stage::
+          \tcp ldid \$(THEOS_STAGING_DIR)/Applications/TrollStore.app/
+          \tcp trollstorehelper \$(THEOS_STAGING_DIR)/Applications/TrollStore.app/
+          \tcp TrollHelper \$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ || true
+          \tchmod 755 \$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid
+          \tchmod 755 \$(THEOS_STAGING_DIR)/Applications/TrollStore.app/trollstorehelper
+          \tchmod 755 \$(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollHelper || true
+          \t\$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist \$(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollStore
+          \t\$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist \$(THEOS_STAGING_DIR)/Applications/TrollStore.app/trollstorehelper
+          \t\$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist \$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid
+          \t\$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist \$(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollHelper || true
+          \trm -f \$(THEOS_STAGING_DIR)/Applications/TrollStore.app/entitlements.plist
+          '''
+          with open('project/Makefile', 'w') as f:
+              f.write(makefile_content.replace('    ', '\t'))
+          
+          entry_code = '''import UIKit
+          import SwiftUI
+
+          @main
+          class TrollStoreAppDelegate: UIResponder, UIApplicationDelegate {
+              var window: UIWindow?
+              func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+                  window = UIWindow(frame: UIScreen.main.bounds)
+                  let appListVC = AppListViewController()
+                  let appListNav = UINavigationController(rootViewController: appListVC)
+                  appListNav.tabBarItem = UITabBarItem(title: NSLocalizedString(\"Apps\", comment: \"\"), image: UIImage(systemName: \"app\"), tag: 0)
+                  
+                  let settingsVC = UIHostingController(rootView: SettingsView())
+                  settingsVC.title = NSLocalizedString(\"Settings\", comment: \"\")
+                  let settingsNav = UINavigationController(rootViewController: settingsVC)
+                  settingsNav.tabBarItem = UITabBarItem(title: NSLocalizedString(\"Settings\", comment: \"\"), image: UIImage(systemName: \"gear\"), tag: 1)
+                  
+                  let tabBarController = UITabBarController()
+                  tabBarController.viewControllers = [appListNav, settingsNav]
+                  window?.rootViewController = tabBarController
+                  window?.makeKeyAndVisible()
+                  return true
+              }
+          }
+          '''
+          with open('project/TrollStoreApp.swift', 'w') as f:
+              f.write(entry_code)
+          "
 
       - name: Build with Theos
         run: |
