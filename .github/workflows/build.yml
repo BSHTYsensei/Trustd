@@ -38,41 +38,32 @@ jobs:
     - name: Clone TrollStore source
       run: |
         git clone --recursive https://github.com/opa334/TrollStore.git trollstore
-        ls -la trollstore
-        ls -la trollstore/Exploits/fastPathSign
 
-    - name: Build fastPathSign
+    - name: Build fastPathSign (tool, needed by RootHelper signing)
       working-directory: trollstore/Exploits/fastPathSign
-      run: |
-        make
-        ls -la
+      run: make
 
-    - name: Build RootHelper (trollstorehelper)
+    - name: Build trollstorehelper
       working-directory: trollstore/RootHelper
-      run: |
-        make FINALPACKAGE=1
+      run: make FINALPACKAGE=1
 
     - name: Build TrollHelper
       working-directory: trollstore/TrollHelper
-      run: |
-        make FINALPACKAGE=1
+      run: make FINALPACKAGE=1
 
-    - name: Locate artifacts
+    - name: Locate binaries
       working-directory: trollstore
       run: |
         echo "=== trollstorehelper ==="
-        find . -name 'trollstorehelper' -type f 2>/dev/null
-        echo "=== .app bundles ==="
-        find . -name '*.app' -type d 2>/dev/null
-        echo "=== fastPathSign ==="
-        find . -name 'fastPathSign' -type f 2>/dev/null
+        find . -name 'trollstorehelper' -type f
+        echo "=== TrollHelper binary ==="
+        find . -path '*TrollHelper*' -type f -perm +111
 
-    - name: Upload artifacts
+    - name: Upload binaries
       uses: actions/upload-artifact@v4
       with:
         name: trollstore-binaries
         path: |
           trollstore/**/trollstorehelper
-          trollstore/**/*.app/**
-          trollstore/Exploits/fastPathSign/fastPathSign
+          trollstore/**/TrollHelper
         if-no-files-found: warn
