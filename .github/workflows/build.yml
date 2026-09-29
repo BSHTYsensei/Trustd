@@ -19,12 +19,13 @@ jobs:
       - name: Setup app bundle structure
         run: |
           mkdir -p Payload/TrollStore.app
-          cp build_root/CodeSigningInstaller.swift build_root/AppListView.swift build_root/SettingsView.swift build_root/AppManager.swift Payload/TrollStore.app/
-          cp build_root/trollstorehelper Payload/TrollStore.app/
-          cp build_root/ldid Payload/TrollStore.app/
-          cp build_root/Resources/Info.plist Payload/TrollStore.app/
-          cp build_root/Resources/entitlements.plist Payload/TrollStore.app/
-          find build_root/Resources -maxdepth 1 \( -name "*.png" -o -name "*.jpg" \) -exec cp {} Payload/TrollStore.app/ \;
+          cp build_root/TrollStore/CodeSigningInstaller.swift build_root/TrollStore/AppListView.swift build_root/TrollStore/SettingsView.swift build_root/TrollStore/AppManager.swift Payload/TrollStore.app/
+          cp build_root/TrollStore/trollstorehelper Payload/TrollStore.app/
+          cp build_root/TrollStore/ldid Payload/TrollStore.app/
+          cp build_root/TrollStore/TrollHelper Payload/TrollStore.app/ 2>/dev/null || true
+          cp build_root/TrollStore/Resources/Info.plist Payload/TrollStore.app/
+          cp build_root/TrollStore/Resources/entitlements.plist Payload/TrollStore.app/
+          find build_root/TrollStore/Resources -maxdepth 1 \( -name "*.png" -o -name "*.jpg" \) -exec cp {} Payload/TrollStore.app/ \;
 
       - name: Compile Swift to TrollStore binary
         run: |
@@ -49,9 +50,10 @@ jobs:
       - name: Sign all binaries with ldid
         run: |
           cd Payload/TrollStore.app
-          chmod 755 ldid trollstorehelper
+          chmod 755 ldid trollstorehelper TrollHelper
           ./ldid -Sentitlements.plist TrollStore
           ./ldid -Sentitlements.plist trollstorehelper
+          ./ldid -Sentitlements.plist TrollHelper 2>/dev/null || true
 
       - name: Remove entitlements.plist from bundle
         run: |
