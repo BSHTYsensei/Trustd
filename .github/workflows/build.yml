@@ -1,4 +1,4 @@
-name: Build TrollStore
+name: Build TrollStore with Theos
 
 on:
   push:
@@ -12,55 +12,68 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Theos and SDK
+        run: |
+          export THEOS=~/theos
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          mkdir -p $THEOS/sdks
+          cd $THEOS/sdks
+          curl -L -o iPhoneOS16.5.sdk.tar.xz https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
+          tar -xf iPhoneOS16.5.sdk.tar.xz
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          echo "PATH=$THEOS/bin:$PATH" >> $GITHUB_ENV
+
       - name: Extract TrollStore.zip
         run: |
           unzip -o TrollStore.zip -d build_root
 
-      - name: Setup app bundle structure
+      - name: Prepare Project
         run: |
-          mkdir -p Payload/TrollStore.app
-          cp build_root/TrollStore/CodeSigningInstaller.swift build_root/TrollStore/AppListView.swift build_root/TrollStore/SettingsView.swift build_root/TrollStore/AppManager.swift Payload/TrollStore.app/
-          cp build_root/TrollStore/trollstorehelper Payload/TrollStore.app/
-          cp build_root/TrollStore/ldid Payload/TrollStore.app/
-          cp build_root/TrollStore/TrollHelper Payload/TrollStore.app/ 2>/dev/null || true
-          cp build_root/TrollStore/Resources/Info.plist Payload/TrollStore.app/
-          cp build_root/TrollStore/Resources/entitlements.plist Payload/TrollStore.app/
-          find build_root/TrollStore/Resources -maxdepth 1 \( -name "*.png" -o -name "*.jpg" \) -exec cp {} Payload/TrollStore.app/ \;
+          mkdir -p project/Resources
+          cp build_root/TrollStore/CodeSigningInstaller.swift project/
+          cp build_root/TrollStore/AppListView.swift project/
+          cp build_root/TrollStore/SettingsView.swift project/
+          cp build_root/TrollStore/AppManager.swift project/
+          cp build_root/TrollStore/Resources/* project/Resources/
+          cp build_root/TrollStore/ldid project/
+          cp build_root/TrollStore/trollstorehelper project/
+          cp build_root/TrollStore/TrollHelper project/ || true
 
-      - name: Compile Swift to TrollStore binary
+      - name: Fix Swift WIFEXITED/WEXITSTATUS macros
         run: |
-          cd Payload/TrollStore.app
-          xcrun swiftc \
-            -o TrollStore \
-            CodeSigningInstaller.swift \
-            AppListView.swift \
-            SettingsView.swift \
-            AppManager.swift \
-            -target arm64-apple-ios15.0 \
-            -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
-            -framework UIKit \
-            -framework SwiftUI \
-            -framework Foundation \
-            -framework CoreGraphics \
-            -Xlinker -rpath -Xlinker @executable_path/ \
-            -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist
-          chmod 755 TrollStore
-          rm -f CodeSigningInstaller.swift AppListView.swift SettingsView.swift AppManager.swift
+          sed -i '' '1i\
+          import Darwin\
+          func WIFEXITED(_ status: Int32) -> Bool { return (status & 0x7f) == 0 }\
+          func WEXITSTATUS(_ status: Int32) -> Int32 { return (status >> 8) & 0xff }
+          ' project/CodeSigningInstaller.swift project/SettingsView.swift
 
-      - name: Sign all binaries with ldid
+      - name: Create Makefile
         run: |
-          cd Payload/TrollStore.app
-          chmod 755 ldid trollstorehelper TrollHelper
-          ./ldid -Sentitlements.plist TrollStore
-          ./ldid -Sentitlements.plist trollstorehelper
-          ./ldid -Sentitlements.plist TrollHelper 2>/dev/null || true
+          cat << 'EOF' > project/Makefile
+          ARCHS = arm64
+          TARGET = iphone:clang:16.5:15.0
+          INSTALL_TARGET_PROCESS = TrollStore
+          include $(THEOS)/makefiles/common.mk
+          APPLICATION_NAME = TrollStore
+          TrollStore_FILES = CodeSigningInstaller.swift AppListView.swift SettingsView.swift AppManager.swift
+          TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics
+          TrollStore_CFLAGS = -fmodules -fcxx-modules
+          TrollStore_SWIFTFLAGS = -target arm64-apple-ios15.0
+          TrollStore_LDFLAGS = -rpath @executable_path/
+          TrollStore_RESOURCE_DIRS = Resources
+          include $(THEOS_MAKE_PATH)/application.mk
+          EOF
+          printf '\nafter-stage::\n\tcp ldid $(THEOS_STAGING_DIR)/Applications/TrollStore.app/\n\tcp trollstorehelper $(THEOS_STAGING_DIR)/Applications/TrollStore.app/\n\tcp TrollHelper $(THEOS_STAGING_DIR)/Applications/TrollStore.app/ || true\n\tchmod 755 $(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid\n\tchmod 755 $(THEOS_STAGING_DIR)/Applications/TrollStore.app/trollstorehelper\n\tchmod 755 $(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollHelper || true\n\t$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollStore\n\t$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/trollstorehelper\n\t$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid\n\t$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollHelper || true\n\trm -f $(THEOS_STAGING_DIR)/Applications/TrollStore.app/entitlements.plist\n' >> project/Makefile
 
-      - name: Remove entitlements.plist from bundle
+      - name: Build with Theos
         run: |
-          rm -f Payload/TrollStore.app/entitlements.plist
+          cd project
+          make
 
       - name: Package IPA
         run: |
+          mkdir -p Payload
+          cp -r project/.theos/obj/TrollStore.app Payload/TrollStore.app
           zip -r9 TrollStore.ipa Payload/
 
       - name: Upload artifact
