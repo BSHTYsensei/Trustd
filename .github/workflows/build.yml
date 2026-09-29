@@ -1,7 +1,6 @@
 name: Build TrollStore Components
 
 on:
-  push:
   workflow_dispatch:
 
 jobs:
@@ -51,19 +50,11 @@ jobs:
       working-directory: trollstore/TrollHelper
       run: make FINALPACKAGE=1
 
-    - name: Locate binaries
-      working-directory: trollstore
-      run: |
-        echo "=== trollstorehelper ==="
-        find . -name 'trollstorehelper' -type f
-        echo "=== TrollHelper binary ==="
-        find . -path '*TrollHelper*' -type f -perm +111
-
     - name: Upload binaries
       uses: actions/upload-artifact@v4
       with:
         name: trollstore-binaries
         path: |
-          trollstore/**/trollstorehelper
-          trollstore/**/TrollHelper
+          trollstore/RootHelper/.theos/obj/trollstorehelper
+          trollstore/TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/TrollStorePersistenceHelper
         if-no-files-found: warn
