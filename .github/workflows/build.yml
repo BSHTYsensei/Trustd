@@ -12,50 +12,40 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Setup Theos
-      uses: Randomblock1/theos-action@v1
-      with:
-        theos-dir: 'theos'
-
-    # 关键修复：手动创建 sdks 目录，避免 theos-action 的 mv 失败
-    - name: Prepare Theos SDKs directory
+    - name: Install dependencies
       run: |
-        mkdir -p theos/sdks
+        brew install ldid dpkg xz
 
-    - name: Download and install iPhoneOS16.5 SDK
+    - name: Install Theos
       run: |
-        cd theos/sdks
+        export THEOS=$HOME/theos
+        git clone --recursive https://github.com/theos/theos.git $THEOS
+        echo "THEOS=$THEOS" >> $GITHUB_ENV
+        echo "$THEOS/bin" >> $GITHUB_PATH
+
+    - name: Install iPhoneOS16.5 SDK
+      run: |
+        mkdir -p $THEOS/sdks
+        cd $THEOS/sdks
         curl -L -o iPhoneOS16.5.sdk.tar.xz \
           https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
         tar -xf iPhoneOS16.5.sdk.tar.xz
         rm iPhoneOS16.5.sdk.tar.xz
         ls -la
 
-    - name: Install dependencies
-      run: |
-        brew install ldid dpkg xz
-
     - name: Build RootHelper (trollstorehelper)
       run: |
-        export THEOS=$PWD/theos
         make -C ./RootHelper FINALPACKAGE=1
 
     - name: Build TrollHelper
       run: |
-        export THEOS=$PWD/theos
         make -C ./TrollHelper FINALPACKAGE=1
 
     - name: Sign with fastPathSign
       run: |
-        # 假设巨魔仓库里 fastPathSign 在 ./fastPathSign 或 ./bin/fastPathSign
-        # 请根据你仓库实际路径调整
-        FASTPATHSIGN=./fastPathSign
-        if [ ! -f "$FASTPATHSIGN" ]; then
-          FASTPATHSIGN=$(find . -name 'fastPathSign' -type f | head -n 1)
-        fi
+        FASTPATHSIGN=$(find . -name 'fastPathSign' -type f | head -n 1)
         echo "Using fastPathSign at: $FASTPATHSIGN"
         chmod +x "$FASTPATHSIGN"
-        # 对 helper 签名（路径按实际产物调整）
         "$FASTPATHSIGN" RootHelper/.theos/obj/trollstorehelper || true
         "$FASTPATHSIGN" TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/TrollStorePersistenceHelper || true
 
