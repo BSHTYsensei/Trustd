@@ -1,0 +1,45 @@
+name: Build TrollStore Components
+
+on:
+  push:
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Theos
+      uses: Randomblock1/theos-action@v1
+      with:
+        theos-dir: 'theos'
+
+    - name: Install dependencies
+      run: |
+        brew install ldid dpkg
+
+    - name: Build RootHelper (trollstorehelper)
+      run: |
+        export THEOS=$PWD/theos
+        make -C ./RootHelper FINALPACKAGE=1
+
+    - name: Build TrollHelper
+      run: |
+        export THEOS=$PWD/theos
+        make -C ./TrollHelper FINALPACKAGE=1
+
+    - name: Build Embedded TrollHelper (可选)
+      run: |
+        export THEOS=$PWD/theos
+        make -C ./TrollHelper FINALPACKAGE=1 EMBEDDED_ROOT_HELPER=1
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: trollstore-binaries
+        path: |
+          RootHelper/.theos/obj/trollstorehelper
+          TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/
