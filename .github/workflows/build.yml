@@ -45,7 +45,7 @@ jobs:
       working-directory: trollstore/Exploits/fastPathSign
       run: |
         make
-        ls -la fastPathSign
+        ls -la
 
     - name: Build RootHelper (trollstorehelper)
       working-directory: trollstore/RootHelper
@@ -57,10 +57,22 @@ jobs:
       run: |
         make FINALPACKAGE=1
 
+    - name: Locate artifacts
+      working-directory: trollstore
+      run: |
+        echo "=== trollstorehelper ==="
+        find . -name 'trollstorehelper' -type f 2>/dev/null
+        echo "=== .app bundles ==="
+        find . -name '*.app' -type d 2>/dev/null
+        echo "=== fastPathSign ==="
+        find . -name 'fastPathSign' -type f 2>/dev/null
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: trollstore-binaries
         path: |
-          trollstore/RootHelper/.theos/obj/trollstorehelper
-          trollstore/TrollHelper/.theos/obj/
+          trollstore/**/trollstorehelper
+          trollstore/**/*.app/**
+          trollstore/Exploits/fastPathSign/fastPathSign
+        if-no-files-found: warn
