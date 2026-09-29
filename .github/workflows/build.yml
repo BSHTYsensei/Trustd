@@ -1,6 +1,7 @@
 name: Build TrollStore Components
 
 on:
+  push:
   workflow_dispatch:
 
 jobs:
@@ -50,11 +51,16 @@ jobs:
       working-directory: trollstore/TrollHelper
       run: make FINALPACKAGE=1
 
+    - name: Collect binaries
+      run: |
+        mkdir -p out
+        cp trollstore/RootHelper/.theos/obj/trollstorehelper out/trollstorehelper
+        cp trollstore/TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/TrollStorePersistenceHelper out/TrollHelper
+        ls -la out
+
     - name: Upload binaries
       uses: actions/upload-artifact@v4
       with:
         name: trollstore-binaries
-        path: |
-          trollstore/RootHelper/.theos/obj/trollstorehelper
-          trollstore/TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/TrollStorePersistenceHelper
-        if-no-files-found: warn
+        path: out/*
+        if-no-files-found: error
