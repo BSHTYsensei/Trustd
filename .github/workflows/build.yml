@@ -1,6 +1,7 @@
 name: Build TrollStore Components
 
 on:
+  push:
   workflow_dispatch:
 
 jobs:
@@ -10,7 +11,12 @@ jobs:
     steps:
     - name: Install dependencies
       run: |
-        brew install ldid dpkg xz
+        brew install ldid dpkg xz libarchive pkg-config
+
+    - name: Verify libarchive
+      run: |
+        echo "libarchive prefix: $(brew --prefix libarchive)"
+        ls -la "$(brew --prefix libarchive)/include/archive.h"
 
     - name: Install Theos
       run: |
@@ -44,17 +50,10 @@ jobs:
       run: |
         make FINALPACKAGE=1
 
-    - name: Sign with fastPathSign
-      working-directory: trollstore
-      run: |
-        chmod +x fastPathSign/fastPathSign
-        ./fastPathSign/fastPathSign RootHelper/.theos/obj/trollstorehelper || true
-        ./fastPathSign/fastPathSign TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/TrollStorePersistenceHelper || true
-
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: trollstore-binaries
         path: |
           trollstore/RootHelper/.theos/obj/trollstorehelper
-          trollstore/TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/
+          trollstore/TrollHelper/.theos/obj/
