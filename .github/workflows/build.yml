@@ -1,66 +1,68 @@
-name: Build TrollStore Components
+name: Build TrollStore
 
 on:
   push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-latest
-
+    runs-on: macos-14
     steps:
-    - name: Install dependencies
-      run: |
-        brew install ldid dpkg xz libarchive pkg-config
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Verify libarchive
-      run: |
-        echo "libarchive prefix: $(brew --prefix libarchive)"
-        ls -la "$(brew --prefix libarchive)/include/archive.h"
+      - name: Extract TrollStore.zip
+        run: |
+          unzip -o TrollStore.zip -d build_root
 
-    - name: Install Theos
-      run: |
-        export THEOS=$HOME/theos
-        git clone --recursive https://github.com/theos/theos.git $THEOS
-        echo "THEOS=$THEOS" >> $GITHUB_ENV
-        echo "$THEOS/bin" >> $GITHUB_PATH
+      - name: Setup app bundle structure
+        run: |
+          mkdir -p Payload/TrollStore.app
+          cp build_root/CodeSigningInstaller.swift build_root/AppListView.swift build_root/SettingsView.swift build_root/AppManager.swift Payload/TrollStore.app/
+          cp build_root/trollstorehelper Payload/TrollStore.app/
+          cp build_root/ldid Payload/TrollStore.app/
+          cp build_root/Resources/Info.plist Payload/TrollStore.app/
+          cp build_root/Resources/entitlements.plist Payload/TrollStore.app/
+          find build_root/Resources -maxdepth 1 \( -name "*.png" -o -name "*.jpg" \) -exec cp {} Payload/TrollStore.app/ \;
 
-    - name: Install iPhoneOS16.5 SDK
-      run: |
-        mkdir -p $THEOS/sdks
-        cd $THEOS/sdks
-        curl -L -o iPhoneOS16.5.sdk.tar.xz \
-          https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
-        tar -xf iPhoneOS16.5.sdk.tar.xz
-        rm iPhoneOS16.5.sdk.tar.xz
-        ls -la
+      - name: Compile Swift to TrollStore binary
+        run: |
+          cd Payload/TrollStore.app
+          xcrun swiftc \
+            -o TrollStore \
+            CodeSigningInstaller.swift \
+            AppListView.swift \
+            SettingsView.swift \
+            AppManager.swift \
+            -target arm64-apple-ios15.0 \
+            -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
+            -framework UIKit \
+            -framework SwiftUI \
+            -framework Foundation \
+            -framework CoreGraphics \
+            -Xlinker -rpath -Xlinker @executable_path/ \
+            -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist
+          chmod 755 TrollStore
+          rm -f CodeSigningInstaller.swift AppListView.swift SettingsView.swift AppManager.swift
 
-    - name: Clone TrollStore source
-      run: |
-        git clone --recursive https://github.com/opa334/TrollStore.git trollstore
+      - name: Sign all binaries with ldid
+        run: |
+          cd Payload/TrollStore.app
+          chmod 755 ldid trollstorehelper
+          ./ldid -Sentitlements.plist TrollStore
+          ./ldid -Sentitlements.plist trollstorehelper
 
-    - name: Build fastPathSign (tool, needed by RootHelper signing)
-      working-directory: trollstore/Exploits/fastPathSign
-      run: make
+      - name: Remove entitlements.plist from bundle
+        run: |
+          rm -f Payload/TrollStore.app/entitlements.plist
 
-    - name: Build trollstorehelper
-      working-directory: trollstore/RootHelper
-      run: make FINALPACKAGE=1
+      - name: Package IPA
+        run: |
+          zip -r9 TrollStore.ipa Payload/
 
-    - name: Build TrollHelper
-      working-directory: trollstore/TrollHelper
-      run: make FINALPACKAGE=1
-
-    - name: Collect binaries
-      run: |
-        mkdir -p out
-        cp trollstore/RootHelper/.theos/obj/trollstorehelper out/trollstorehelper
-        cp trollstore/TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/TrollStorePersistenceHelper out/TrollHelper
-        ls -la out
-
-    - name: Upload binaries
-      uses: actions/upload-artifact@v4
-      with:
-        name: trollstore-binaries
-        path: out/*
-        if-no-files-found: error
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrollStore.ipa
+          path: TrollStore.ipa
