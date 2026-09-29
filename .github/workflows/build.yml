@@ -1,7 +1,6 @@
 name: Build TrollStore Components
 
 on:
-  push:
   workflow_dispatch:
 
 jobs:
@@ -9,9 +8,6 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
     - name: Install dependencies
       run: |
         brew install ldid dpkg xz
@@ -33,26 +29,32 @@ jobs:
         rm iPhoneOS16.5.sdk.tar.xz
         ls -la
 
-    - name: Build RootHelper (trollstorehelper)
+    - name: Clone TrollStore source
       run: |
-        make -C ./RootHelper FINALPACKAGE=1
+        git clone --recursive https://github.com/opa334/TrollStore.git trollstore
+        ls -la trollstore
+
+    - name: Build RootHelper (trollstorehelper)
+      working-directory: trollstore/RootHelper
+      run: |
+        make FINALPACKAGE=1
 
     - name: Build TrollHelper
+      working-directory: trollstore/TrollHelper
       run: |
-        make -C ./TrollHelper FINALPACKAGE=1
+        make FINALPACKAGE=1
 
     - name: Sign with fastPathSign
+      working-directory: trollstore
       run: |
-        FASTPATHSIGN=$(find . -name 'fastPathSign' -type f | head -n 1)
-        echo "Using fastPathSign at: $FASTPATHSIGN"
-        chmod +x "$FASTPATHSIGN"
-        "$FASTPATHSIGN" RootHelper/.theos/obj/trollstorehelper || true
-        "$FASTPATHSIGN" TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/TrollStorePersistenceHelper || true
+        chmod +x fastPathSign/fastPathSign
+        ./fastPathSign/fastPathSign RootHelper/.theos/obj/trollstorehelper || true
+        ./fastPathSign/fastPathSign TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/TrollStorePersistenceHelper || true
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: trollstore-binaries
         path: |
-          RootHelper/.theos/obj/trollstorehelper
-          TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/
+          trollstore/RootHelper/.theos/obj/trollstorehelper
+          trollstore/TrollHelper/.theos/obj/TrollStorePersistenceHelper.app/
