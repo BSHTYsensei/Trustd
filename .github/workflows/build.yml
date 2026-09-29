@@ -39,6 +39,13 @@ jobs:
       run: |
         git clone --recursive https://github.com/opa334/TrollStore.git trollstore
         ls -la trollstore
+        ls -la trollstore/Exploits/fastPathSign
+
+    - name: Build fastPathSign
+      working-directory: trollstore/Exploits/fastPathSign
+      run: |
+        make
+        ls -la fastPathSign
 
     - name: Build RootHelper (trollstorehelper)
       working-directory: trollstore/RootHelper
