@@ -28,6 +28,8 @@ jobs:
       - name: Extract TrollStore.zip
         run: |
           unzip -o TrollStore.zip -d build_root
+          echo "=== build_root/TrollStore ==="
+          ls -la build_root/TrollStore
 
       - name: Prepare Project
         run: |
@@ -41,11 +43,17 @@ jobs:
           cp build_root/TrollStore/trollstorehelper project/ || true
           cp build_root/TrollStore/TrollHelper project/ || true
 
-          if ! grep -q "^import Security" project/CodeSigningInstaller.swift; then
-            sed -i '' '1i\
-          import Security
-          ' project/CodeSigningInstaller.swift
-          fi
+          echo "=== Before import Security ==="
+          head -n 5 project/CodeSigningInstaller.swift
+
+          awk 'BEGIN{print "import Security"} !/^import Security$/' project/CodeSigningInstaller.swift > project/CodeSigningInstaller.swift.tmp
+          mv project/CodeSigningInstaller.swift.tmp project/CodeSigningInstaller.swift
+
+          echo "=== After import Security ==="
+          head -n 5 project/CodeSigningInstaller.swift
+
+          echo "=== Files in project ==="
+          ls -la project
 
       - name: Create Makefile and Entry Point
         run: |
@@ -107,10 +115,19 @@ jobs:
           }
           EOF
 
+          echo "=== Makefile ==="
+          cat project/Makefile
+          echo "=== TrollStoreApp.swift ==="
+          cat project/TrollStoreApp.swift
+
       - name: Build with Theos
         run: |
           cd project
+          echo "=== make start ==="
           make
+          echo "=== make end ==="
+          echo "=== .theos tree ==="
+          find .theos -type d | head -n 50
 
       - name: Inject Binaries and Package TAR
         run: |
@@ -132,7 +149,13 @@ jobs:
 
           rm -f "$APP_PATH/entitlements.plist" || true
 
+          echo "=== TrollStore.app contents ==="
+          ls -la "$APP_PATH"
+
           tar -cvf ../TrollStore.tar -C $(dirname "$APP_PATH") TrollStore.app
+
+          echo "=== TAR contents ==="
+          tar -tvf ../TrollStore.tar | head -n 30
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
