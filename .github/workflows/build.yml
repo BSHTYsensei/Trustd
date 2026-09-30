@@ -30,14 +30,15 @@ jobs:
       - name: Prepare Project
         run: |
           mkdir -p project/Resources
-          cp build_root/TrollStore/CodeSigningInstaller.swift project/
-          cp build_root/TrollStore/AppListView.swift project/
-          cp build_root/TrollStore/SettingsView.swift project/
-          cp build_root/TrollStore/AppManager.swift project/
-          cp build_root/TrollStore/Resources/* project/Resources/
-          cp build_root/TrollStore/ldid project/
-          cp build_root/TrollStore/trollstorehelper project/
+          cp build_root/TrollStore/CodeSigningInstaller.swift project/ || true
+          cp build_root/TrollStore/AppManager.swift project/ || true
+          cp build_root/TrollStore/SettingsView.swift project/ || true
+          cp build_root/TrollStore/AppListView.swift project/ || true
+          cp -r build_root/TrollStore/Resources/* project/Resources/ || true
+          cp build_root/TrollStore/ldid project/ || true
+          cp build_root/TrollStore/trollstorehelper project/ || true
           cp build_root/TrollStore/TrollHelper project/ || true
+          cp build_root/TrollStore/entitlements.plist project/ || true
 
       - name: Create Makefile and Entry Point
         run: |
@@ -46,27 +47,16 @@ jobs:
           TARGET = iphone:clang:16.5:15.0
           INSTALL_TARGET_PROCESS = TrollStore
           include $(THEOS)/makefiles/common.mk
-          APPLICATION_NAME = TrollStore
-          TrollStore_FILES = TrollStoreApp.swift CodeSigningInstaller.swift AppListView.swift SettingsView.swift AppManager.swift
-          TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics
-          TrollStore_SWIFTFLAGS = -target arm64-apple-ios15.0
-          TrollStore_RESOURCE_DIRS = Resources
-          include $(THEOS_MAKE_PATH)/application.mk
 
-          after-stage::
-          	cp ldid $(THEOS_STAGING_DIR)/Applications/TrollStore.app/
-          	cp trollstorehelper $(THEOS_STAGING_DIR)/Applications/TrollStore.app/
-          	cp TrollHelper $(THEOS_STAGING_DIR)/Applications/TrollStore.app/ || true
-          	chmod 755 $(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid
-          	chmod 755 $(THEOS_STAGING_DIR)/Applications/TrollStore.app/trollstorehelper
-          	chmod 755 $(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollHelper || true
-          	$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollStore
-          	$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/trollstorehelper
-          	$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid
-          	$(THEOS_STAGING_DIR)/Applications/TrollStore.app/ldid -Sentitlements.plist $(THEOS_STAGING_DIR)/Applications/TrollStore.app/TrollHelper || true
-          	rm -f $(THEOS_STAGING_DIR)/Applications/TrollStore.app/entitlements.plist
+          APPLICATION_NAME = TrollStore
+          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift
+          TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
+          TrollStore_LDFLAGS = -larchive -lplist -lroot -lz -lbz2 -llzma -liconv
+          TrollStore_RESOURCE_DIRS = Resources
+          TrollStore_SWIFTFLAGS = -parse-as-library
+          include $(THEOS_MAKE_PATH)/application.mk
           EOF
-          
+
           cat << 'EOF' > project/TrollStoreApp.swift
           import UIKit
           import SwiftUI
@@ -74,22 +64,38 @@ jobs:
           @main
           class TrollStoreAppDelegate: UIResponder, UIApplicationDelegate {
               var window: UIWindow?
+
               func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   window = UIWindow(frame: UIScreen.main.bounds)
                   let appListVC = AppListViewController()
                   let appListNav = UINavigationController(rootViewController: appListVC)
                   appListNav.tabBarItem = UITabBarItem(title: NSLocalizedString("Apps", comment: ""), image: UIImage(systemName: "app"), tag: 0)
-                  
+
                   let settingsVC = UIHostingController(rootView: SettingsView())
                   settingsVC.title = NSLocalizedString("Settings", comment: "")
                   let settingsNav = UINavigationController(rootViewController: settingsVC)
                   settingsNav.tabBarItem = UITabBarItem(title: NSLocalizedString("Settings", comment: ""), image: UIImage(systemName: "gear"), tag: 1)
-                  
+
                   let tabBarController = UITabBarController()
                   tabBarController.viewControllers = [appListNav, settingsNav]
                   window?.rootViewController = tabBarController
                   window?.makeKeyAndVisible()
                   return true
+              }
+
+              func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
+                  guard url.scheme == "apple-magnifier" else { return false }
+                  guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+                  if components.host == "install" {
+                      if let installURLString = components.queryItems?.first(where: { $0.name == "url" })?.value,
+                         let installURL = URL(string: installURLString) {
+                          DispatchQueue.main.async {
+                              NotificationCenter.default.post(name: Notification.Name("TrollStoreRemoteInstall"), object: installURL)
+                          }
+                          return true
+                      }
+                  }
+                  return false
               }
           }
           EOF
@@ -99,10 +105,27 @@ jobs:
           cd project
           make
 
-      - name: Package TAR
+      - name: Inject Binaries and Package TAR
         run: |
-          cd project/.theos/obj
-          tar -cvf ../../../TrollStore.tar TrollStore.app
+          cd project
+          APP_PATH=$(find .theos -name "TrollStore.app" -type d | grep -v "_" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: TrollStore.app not found!"
+            find .theos -type d
+            exit 1
+          fi
+          echo "Found TrollStore.app at: $APP_PATH"
+
+          cp ldid "$APP_PATH/ldid" || true
+          cp trollstorehelper "$APP_PATH/trollstorehelper" || true
+          cp TrollHelper "$APP_PATH/TrollHelper" || true
+          chmod 755 "$APP_PATH/ldid" || true
+          chmod 755 "$APP_PATH/trollstorehelper" || true
+          chmod 755 "$APP_PATH/TrollHelper" || true
+
+          rm -f "$APP_PATH/entitlements.plist" || true
+
+          tar -cvf ../TrollStore.tar -C $(dirname "$APP_PATH") TrollStore.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
