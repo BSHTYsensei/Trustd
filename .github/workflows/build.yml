@@ -57,7 +57,7 @@ jobs:
           APPLICATION_NAME = TrollStore
           TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
-          TrollStore_LDFLAGS = -larchive -lplist -lroot -lz -lbz2 -llzma -liconv
+          TrollStore_LDFLAGS = -lroot
           TrollStore_RESOURCE_DIRS = Resources
           TrollStore_SWIFTFLAGS = -parse-as-library
           include $(THEOS_MAKE_PATH)/application.mk
@@ -108,8 +108,6 @@ jobs:
 
           echo "=== Makefile ==="
           cat project/Makefile
-          echo "=== TrollStoreApp.swift ==="
-          cat project/TrollStoreApp.swift
 
       - name: Build with Theos
         run: |
