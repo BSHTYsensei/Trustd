@@ -43,15 +43,6 @@ jobs:
           cp build_root/TrollStore/trollstorehelper project/ || true
           cp build_root/TrollStore/TrollHelper project/ || true
 
-          echo "=== Before import Security ==="
-          head -n 5 project/CodeSigningInstaller.swift
-
-          awk 'BEGIN{print "import Security"} !/^import Security$/' project/CodeSigningInstaller.swift > project/CodeSigningInstaller.swift.tmp
-          mv project/CodeSigningInstaller.swift.tmp project/CodeSigningInstaller.swift
-
-          echo "=== After import Security ==="
-          head -n 5 project/CodeSigningInstaller.swift
-
           echo "=== Files in project ==="
           ls -la project
 
