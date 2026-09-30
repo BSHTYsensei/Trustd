@@ -40,7 +40,12 @@ jobs:
           cp build_root/TrollStore/ldid project/ || true
           cp build_root/TrollStore/trollstorehelper project/ || true
           cp build_root/TrollStore/TrollHelper project/ || true
-          cp build_root/TrollStore/entitlements.plist project/ || true
+
+          if ! grep -q "^import Security" project/CodeSigningInstaller.swift; then
+            sed -i '' '1i\
+          import Security
+          ' project/CodeSigningInstaller.swift
+          fi
 
       - name: Create Makefile and Entry Point
         run: |
