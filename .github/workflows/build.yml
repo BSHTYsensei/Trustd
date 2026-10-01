@@ -28,10 +28,128 @@ jobs:
       - name: Extract TrollStore.zip
         run: |
           unzip -o TrollStore.zip -d build_root
-          echo "=== build_root/TrollStore ==="
-          ls -la build_root/TrollStore
+          echo "=== build_root ==="
+          ls -la build_root
+          echo "=== find fastPathSign ==="
+          find build_root -type d -name "fastPathSign" || true
+          echo "=== find RootHelper.zip ==="
+          find build_root -name "RootHelper.zip" || true
+          echo "=== find RootHelper dir ==="
+          find build_root -type d -name "RootHelper" || true
+
+      - name: Build fastPathSign
+        run: |
+          FPS_DIR=$(find build_root -type d -name "fastPathSign" | head -n 1)
+          if [ -z "$FPS_DIR" ]; then
+            echo "fastPathSign dir not found"
+            exit 1
+          fi
+          echo "fastPathSign dir: $FPS_DIR"
+          cd "$FPS_DIR"
+          make -j$(sysctl -n hw.ncpu)
+          FPS_BIN=$(find "$FPS_DIR" -type f -name "fastPathSign" ! -name "*.*" | head -n 1)
+          if [ -z "$FPS_BIN" ]; then
+            echo "fastPathSign binary not found after build"
+            find "$FPS_DIR" -type f
+            exit 1
+          fi
+          chmod 755 "$FPS_BIN"
+          echo "FASTPATHSIGN_PATH=$FPS_BIN" >> $GITHUB_ENV
+          echo "fastPathSign built at: $FPS_BIN"
+          ls -la "$FPS_BIN"
+
+      - name: Extract RootHelper.zip and Build trollstorehelper
+        id: build_helper
+        continue-on-error: true
+        run: |
+          RH_ZIP=$(find build_root -name "RootHelper.zip" | head -n 1)
+          if [ -z "$RH_ZIP" ]; then
+            echo "RootHelper.zip not found"
+            exit 1
+          fi
+          echo "RootHelper.zip: $RH_ZIP"
+          mkdir -p project_helper
+          unzip -o "$RH_ZIP" -d project_helper
+          echo "=== project_helper contents ==="
+          ls -la project_helper
+
+          RH_DIR=$(find project_helper -type d -name "RootHelper" | head -n 1)
+          if [ -z "$RH_DIR" ]; then
+            RH_DIR="project_helper"
+          fi
+          echo "RootHelper dir: $RH_DIR"
+
+          cd "$RH_DIR"
+
+          if [ -f "Makefile" ]; then
+            echo "Using existing Makefile"
+            make -j$(sysctl -n hw.ncpu) FINALPACKAGE=1
+          else
+            echo "No Makefile found, generating one"
+            cat > Makefile << 'EOF'
+          ARCHS = arm64
+          TARGET = iphone:clang:16.5:15.0
+          include $(THEOS)/makefiles/common.mk
+
+          TOOL_NAME = trollstorehelper
+          trollstorehelper_FILES = $(wildcard *.m) $(wildcard *.c) $(wildcard *.cpp) $(wildcard *.mm)
+          trollstorehelper_FRAMEWORKS = Foundation UIKit Security CoreFoundation SpringBoardServices FrontBoardServices
+          trollstorehelper_LDFLAGS = -larchive -lplist -lroot -lz -lbz2 -llzma -liconv
+          trollstorehelper_CFLAGS = -DEMBEDDED_ROOT_HELPER
+          trollstorehelper_SWIFTFLAGS =
+          include $(THEOS_MAKE_PATH)/tool.mk
+          EOF
+            make -j$(sysctl -n hw.ncpu)
+          fi
+
+          HELPER_PATH=$(find .theos -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
+          if [ -z "$HELPER_PATH" ]; then
+            echo "trollstorehelper output not found"
+            find .theos -type f
+            exit 1
+          fi
+
+          cp "$HELPER_PATH" ../../trollstorehelper_built
+          chmod 755 ../../trollstorehelper_built
+          echo "helper built: ../../trollstorehelper_built"
+          ls -la ../../trollstorehelper_built
+
+      - name: Sign trollstorehelper with fastPathSign
+        if: steps.build_helper.outcome == 'success'
+        run: |
+          echo "Signing with $FASTPATHSIGN_PATH"
+          cp trollstorehelper_built trollstorehelper_to_sign
+          if "$FASTPATHSIGN_PATH" trollstorehelper_to_sign 2>/dev/null; then
+            echo "fastPathSign succeeded"
+            mv trollstorehelper_to_sign trollstorehelper_built
+          else
+            echo "fastPathSign failed, keeping unsigned helper"
+          fi
+          chmod 755 trollstorehelper_built
+          ls -la trollstorehelper_built
+
+      - name: Fallback to prebuilt trollstorehelper
+        if: steps.build_helper.outcome != 'success'
+        run: |
+          PREBUILT=$(find build_root -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
+          if [ -z "$PREBUILT" ]; then
+            echo "No prebuilt trollstorehelper found"
+            exit 1
+          fi
+          cp "$PREBUILT" trollstorehelper_built
+          chmod 755 trollstorehelper_built
+          echo "Using prebuilt: $PREBUILT"
+          ls -la trollstorehelper_built
+
+      - name: Upload trollstorehelper only
+        if: steps.build_helper.outcome != 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: trollstorehelper
+          path: trollstorehelper_built
 
       - name: Prepare Project
+        if: steps.build_helper.outcome == 'success'
         run: |
           mkdir -p project/Resources
           cp build_root/TrollStore/CodeSigningInstaller.swift project/ || true
@@ -40,13 +158,12 @@ jobs:
           cp build_root/TrollStore/AppListView.swift project/ || true
           cp -r build_root/TrollStore/Resources/* project/Resources/ || true
           cp build_root/TrollStore/ldid project/ || true
-          cp build_root/TrollStore/trollstorehelper project/ || true
           cp build_root/TrollStore/TrollHelper project/ || true
-
           echo "=== Files in project ==="
           ls -la project
 
       - name: Create Makefile and Entry Point
+        if: steps.build_helper.outcome == 'success'
         run: |
           cat << 'EOF' > project/Makefile
           ARCHS = arm64
@@ -57,7 +174,7 @@ jobs:
           APPLICATION_NAME = TrollStore
           TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
-          TrollStore_LDFLAGS = -lroot
+          TrollStore_LDFLAGS =
           TrollStore_RESOURCE_DIRS = Resources
           TrollStore_SWIFTFLAGS = -parse-as-library
           include $(THEOS_MAKE_PATH)/application.mk
@@ -106,36 +223,30 @@ jobs:
           }
           EOF
 
-          echo "=== Makefile ==="
-          cat project/Makefile
-
-      - name: Build with Theos
+      - name: Build TrollStore App
+        if: steps.build_helper.outcome == 'success'
         run: |
           cd project
-          echo "=== make start ==="
-          make
-          echo "=== make end ==="
-          echo "=== .theos tree ==="
-          find .theos -type d | head -n 50
+          make -j$(sysctl -n hw.ncpu)
 
       - name: Inject Binaries and Package TAR
+        if: steps.build_helper.outcome == 'success'
         run: |
           cd project
           APP_PATH=$(find .theos -name "TrollStore.app" -type d | grep -v "_" | head -n 1)
           if [ -z "$APP_PATH" ]; then
-            echo "Error: TrollStore.app not found!"
+            echo "TrollStore.app not found!"
             find .theos -type d
             exit 1
           fi
           echo "Found TrollStore.app at: $APP_PATH"
 
+          cp ../trollstorehelper_built "$APP_PATH/trollstorehelper"
+          chmod 755 "$APP_PATH/trollstorehelper"
           cp ldid "$APP_PATH/ldid" || true
-          cp trollstorehelper "$APP_PATH/trollstorehelper" || true
           cp TrollHelper "$APP_PATH/TrollHelper" || true
           chmod 755 "$APP_PATH/ldid" || true
-          chmod 755 "$APP_PATH/trollstorehelper" || true
           chmod 755 "$APP_PATH/TrollHelper" || true
-
           rm -f "$APP_PATH/entitlements.plist" || true
 
           echo "=== TrollStore.app contents ==="
@@ -143,10 +254,8 @@ jobs:
 
           tar -cvf ../TrollStore.tar -C $(dirname "$APP_PATH") TrollStore.app
 
-          echo "=== TAR contents ==="
-          tar -tvf ../TrollStore.tar | head -n 30
-
-      - name: Upload artifact
+      - name: Upload TAR
+        if: steps.build_helper.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: TrollStore.tar
