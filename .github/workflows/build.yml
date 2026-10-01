@@ -82,12 +82,14 @@ jobs:
 
           chmod 755 project/ldid project/trollstorehelper project/TrollHelper 2>/dev/null || true
           cp -r project_deps/RATreeView project/RATreeView
+
           cat > project/Bridging.h << 'EOF'
+          #pragma clang diagnostic push
+          #pragma clang diagnostic ignored "-Weverything"
           #import "RATreeView.h"
-          #import "RATreeNodeInfo.h"
-          #import "RATreeNode.h"
-          #import "RATreeNodeItem.h"
+          #pragma clang diagnostic pop
           EOF
+
           echo "=== project contents ==="
           ls -la project
 
@@ -102,7 +104,8 @@ jobs:
           APPLICATION_NAME = TrollStore
           TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift RATreeView/*.m
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
-          TrollStore_CFLAGS = -I./RATreeView -Wno-error -Wno-deprecated-declarations -Wno-switch -Wno-return-type -Wno-everything
+          TrollStore_CFLAGS = -I./RATreeView -Wno-error -Wno-everything
+          TrollStore_OBJCFLAGS = -I./RATreeView -Wno-error -Wno-everything
           TrollStore_RESOURCE_DIRS = Resources
           TrollStore_SWIFTFLAGS = -parse-as-library -import-objc-header ./Bridging.h
           include $(THEOS_MAKE_PATH)/application.mk
