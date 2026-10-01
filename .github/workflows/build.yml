@@ -32,15 +32,14 @@ jobs:
       - name: Extract TrollStore.zip
         run: |
           unzip -o TrollStore.zip -d build_root
-          echo "=== full tree ==="
           find "$GITHUB_WORKSPACE/build_root" -maxdepth 4 -not -path "*__MACOSX*"
 
       - name: Fetch RATreeView
         run: |
           git clone --depth 1 https://github.com/Augustyniak/RATreeView.git /tmp/RATreeView_src
           mkdir -p project_deps/RATreeView
-          find /tmp/RATreeView_src -name "RATree*.h" -exec cp {} project_deps/RATreeView/ \;
-          find /tmp/RATreeView_src -name "RATree*.m" -exec cp {} project_deps/RATreeView/ \;
+          find /tmp/RATreeView_src -name "*.h" -not -path "*Tests*" -not -path "*Example*" -exec cp {} project_deps/RATreeView/ \;
+          find /tmp/RATreeView_src -name "*.m" -not -path "*Tests*" -not -path "*Example*" -exec cp {} project_deps/RATreeView/ \;
           echo "=== RATreeView files ==="
           ls -la project_deps/RATreeView
 
@@ -57,15 +56,6 @@ jobs:
           LDID=$(find "$ROOT" -type f -name "ldid" ! -name "*.*" | head -n 1)
           TH=$(find "$ROOT" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
           TSH=$(find "$ROOT" -type f -name "TrollHelper" ! -name "*.*" | head -n 1)
-
-          echo "CS=$CS"
-          echo "AM=$AM"
-          echo "SV=$SV"
-          echo "AL=$AL"
-          echo "RES=$RES"
-          echo "LDID=$LDID"
-          echo "TH=$TH"
-          echo "TSH=$TSH"
 
           [ -n "$CS" ] && cp "$CS" project/
           [ -n "$AM" ] && cp "$AM" project/
@@ -100,10 +90,10 @@ jobs:
           include $(THEOS)/makefiles/common.mk
 
           APPLICATION_NAME = TrollStore
-          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift $(wildcard RATree*.m)
+          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift $(wildcard RA*.m)
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
-          TrollStore_CFLAGS = -Wno-error -Wno-everything
-          TrollStore_OBJCFLAGS = -Wno-error -Wno-everything
+          TrollStore_CFLAGS = -fobjc-arc -Wno-error -Wno-everything
+          TrollStore_OBJCFLAGS = -fobjc-arc -Wno-error -Wno-everything
           TrollStore_RESOURCE_DIRS = Resources
           TrollStore_SWIFTFLAGS = -parse-as-library -import-objc-header ./Bridging.h
           include $(THEOS_MAKE_PATH)/application.mk
