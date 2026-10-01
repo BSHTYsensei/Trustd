@@ -44,24 +44,19 @@ jobs:
           echo "=== RATreeView files ==="
           ls -la project_deps/RATreeView
 
-      - name: Fetch ChOma
+      - name: Fetch and Build ChOma
         run: |
           git clone --recursive --depth 1 https://github.com/opa334/ChOma.git /tmp/ChOma_src
-          echo "=== ChOma root ==="
-          ls -la /tmp/ChOma_src
-          echo "=== ChOma .a files (before build) ==="
-          find /tmp/ChOma_src -name "*.a" || true
-
-      - name: Build ChOma
-        run: |
           cd /tmp/ChOma_src
           echo "=== ChOma Makefile ==="
           cat Makefile || true
-          make -j$(sysctl -n hw.ncpu) || true
+          echo "=== make all start ==="
+          make all -j$(sysctl -n hw.ncpu) 2>&1 | tee /tmp/choma_make.log || true
+          echo "=== make all end ==="
           echo "=== ChOma .a files (after build) ==="
           find /tmp/ChOma_src -name "*.a" || true
-          echo "=== ChOma root after build ==="
-          ls -la /tmp/ChOma_src
+          echo "=== ChOma output dir ==="
+          ls -la /tmp/ChOma_src/output || true
 
       - name: Build fastPathSign
         id: build_fps
@@ -118,8 +113,6 @@ jobs:
           ls -la "$RH_PARENT/ChOma"
           echo "=== ChOma .a files ==="
           find "$RH_PARENT/ChOma" -name "*.a" || true
-          echo "=== ChOma external ios ==="
-          ls -la "$RH_PARENT/ChOma/external/ios" || true
 
           git clone --depth 1 --branch v3.7.4 https://github.com/libarchive/libarchive.git /tmp/libarchive_src
           ARCHIVE_H=$(find /tmp/libarchive_src -name "archive.h" | head -n 1)
