@@ -118,7 +118,7 @@ jobs:
 
           trollstorehelper_CFLAGS = -O0 -fobjc-arc -fmodules -Wno-everything -Wno-nonportable-include-path -I. -I../Shared -I../ChOma/src -I$(shell brew --prefix)/opt/libarchive/include -I$(shell brew --prefix)/opt/openssl@3/include
 
-          trollstorehelper_LDFLAGS = -Wl,-no_dead_strip -Wl,-force_load,../ChOma/external/ios/libcrypto.a -L../ChOma/external/ios -lcrypto -larchive
+          trollstorehelper_LDFLAGS = -Wl,-force_load,../ChOma/external/ios/libcrypto.a -L../ChOma/external/ios -lcrypto -larchive
 
           trollstorehelper_FRAMEWORKS = Foundation UIKit Security CoreFoundation CoreTelephony
           trollstorehelper_PRIVATE_FRAMEWORKS = SpringBoardServices BackBoardServices MobileContainerManager FrontBoardServices RunningBoardServices
@@ -155,8 +155,6 @@ jobs:
           nm "$GITHUB_WORKSPACE/trollstorehelper_built" 2>/dev/null | grep -i "csd_code_directory_update\|apply_coretrust\|fat_init_from_path" || true
           echo "=== nm -u (undefined) ==="
           nm -u "$GITHUB_WORKSPACE/trollstorehelper_built" 2>/dev/null | head -n 50 || true
-          echo "=== lipo ==="
-          lipo -info "$GITHUB_WORKSPACE/trollstorehelper_built" || true
 
       - name: Sign trollstorehelper
         if: steps.build_helper.outcome == 'success' && steps.build_fps.outcome == 'success'
