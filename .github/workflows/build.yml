@@ -49,8 +49,19 @@ jobs:
           git clone --recursive --depth 1 https://github.com/opa334/ChOma.git /tmp/ChOma_src
           echo "=== ChOma root ==="
           ls -la /tmp/ChOma_src
-          echo "=== ChOma .a files ==="
+          echo "=== ChOma .a files (before build) ==="
           find /tmp/ChOma_src -name "*.a" || true
+
+      - name: Build ChOma
+        run: |
+          cd /tmp/ChOma_src
+          echo "=== ChOma Makefile ==="
+          cat Makefile || true
+          make -j$(sysctl -n hw.ncpu) || true
+          echo "=== ChOma .a files (after build) ==="
+          find /tmp/ChOma_src -name "*.a" || true
+          echo "=== ChOma root after build ==="
+          ls -la /tmp/ChOma_src
 
       - name: Build fastPathSign
         id: build_fps
@@ -101,17 +112,14 @@ jobs:
             cp -r "$EXPLOITS_DIR" "$RH_PARENT/Exploits"
           fi
 
-          if [ ! -d "$RH_PARENT/ChOma" ]; then
-            echo "Copying ChOma into $RH_PARENT/ChOma"
-            cp -r /tmp/ChOma_src "$RH_PARENT/ChOma"
-          fi
+          rm -rf "$RH_PARENT/ChOma"
+          cp -r /tmp/ChOma_src "$RH_PARENT/ChOma"
           echo "=== ChOma contents ==="
-          ls -la "$RH_PARENT/ChOma" || true
+          ls -la "$RH_PARENT/ChOma"
           echo "=== ChOma .a files ==="
           find "$RH_PARENT/ChOma" -name "*.a" || true
           echo "=== ChOma external ios ==="
           ls -la "$RH_PARENT/ChOma/external/ios" || true
-          ls -la "$RH_PARENT/ChOma/external" || true
 
           git clone --depth 1 --branch v3.7.4 https://github.com/libarchive/libarchive.git /tmp/libarchive_src
           ARCHIVE_H=$(find /tmp/libarchive_src -name "archive.h" | head -n 1)
