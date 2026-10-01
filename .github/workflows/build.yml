@@ -44,19 +44,13 @@ jobs:
           echo "=== RATreeView files ==="
           ls -la project_deps/RATreeView
 
-      - name: Fetch and Build ChOma
+      - name: Fetch ChOma
         run: |
           git clone --recursive --depth 1 https://github.com/opa334/ChOma.git /tmp/ChOma_src
-          cd /tmp/ChOma_src
-          echo "=== ChOma Makefile ==="
-          cat Makefile || true
-          echo "=== make all start ==="
-          make all -j$(sysctl -n hw.ncpu) 2>&1 | tee /tmp/choma_make.log || true
-          echo "=== make all end ==="
-          echo "=== ChOma .a files (after build) ==="
-          find /tmp/ChOma_src -name "*.a" || true
-          echo "=== ChOma output dir ==="
-          ls -la /tmp/ChOma_src/output || true
+          echo "=== ChOma src files ==="
+          ls -la /tmp/ChOma_src/src | head -n 30
+          echo "=== Check CodeDirectory.c ==="
+          ls -la /tmp/ChOma_src/src/CodeDirectory.c || true
 
       - name: Build fastPathSign
         id: build_fps
@@ -111,8 +105,10 @@ jobs:
           cp -r /tmp/ChOma_src "$RH_PARENT/ChOma"
           echo "=== ChOma contents ==="
           ls -la "$RH_PARENT/ChOma"
-          echo "=== ChOma .a files ==="
-          find "$RH_PARENT/ChOma" -name "*.a" || true
+          echo "=== ChOma src files ==="
+          ls -la "$RH_PARENT/ChOma/src" | head -n 30
+          echo "=== Check CodeDirectory.c ==="
+          ls -la "$RH_PARENT/ChOma/src/CodeDirectory.c" || true
 
           git clone --depth 1 --branch v3.7.4 https://github.com/libarchive/libarchive.git /tmp/libarchive_src
           ARCHIVE_H=$(find /tmp/libarchive_src -name "archive.h" | head -n 1)
@@ -132,10 +128,12 @@ jobs:
           fi
 
           if [ -f "Makefile" ]; then
-            echo "=== RootHelper Makefile ==="
+            echo "=== RootHelper Makefile (original) ==="
             cat Makefile
-            echo "Patching Makefile to add -I."
-            sed -i '' 's/trollstorehelper_CFLAGS = /trollstorehelper_CFLAGS = -I. /' Makefile || true
+            echo "Patching Makefile to add -I. and libarchive include path"
+            sed -i '' 's|trollstorehelper_CFLAGS = -fobjc-arc|trollstorehelper_CFLAGS = -fobjc-arc -I. -I$(shell brew --prefix)/opt/libarchive/include|' Makefile || true
+            echo "=== RootHelper Makefile (patched) ==="
+            cat Makefile
             make -j$(sysctl -n hw.ncpu) FINALPACKAGE=1
           else
             echo "No Makefile found, generating one"
@@ -148,7 +146,7 @@ jobs:
           trollstorehelper_FILES = $(wildcard *.m) $(wildcard *.c) $(wildcard *.cpp) $(wildcard *.mm)
           trollstorehelper_FRAMEWORKS = Foundation UIKit Security CoreFoundation SpringBoardServices FrontBoardServices
           trollstorehelper_LDFLAGS = -larchive -lplist -lroot -lz -lbz2 -llzma -liconv
-          trollstorehelper_CFLAGS = -DEMBEDDED_ROOT_HELPER -I.
+          trollstorehelper_CFLAGS = -DEMBEDDED_ROOT_HELPER -I. -I$(shell brew --prefix)/opt/libarchive/include
           trollstorehelper_SWIFTFLAGS =
           include $(THEOS_MAKE_PATH)/tool.mk
           EOF
