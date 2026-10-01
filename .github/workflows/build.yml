@@ -28,6 +28,14 @@ jobs:
       - name: Install deps
         run: |
           brew install libarchive openssl@3 pkg-config || true
+          brew install ldid || true
+          if ! command -v ldid >/dev/null 2>&1; then
+            if [ -f "$THEOS/bin/ldid" ]; then
+              sudo ln -sf "$THEOS/bin/ldid" /usr/local/bin/ldid
+            fi
+          fi
+          which ldid || true
+          ldid -v || true
 
       - name: Extract TrollStore.zip
         run: |
