@@ -31,9 +31,11 @@ jobs:
           echo "=== build_root ==="
           ls -la build_root
           echo "=== find RootHelper ==="
-          find build_root -type d -name "RootHelper" || true
+          find "$GITHUB_WORKSPACE/build_root" -type d -name "RootHelper" || true
           echo "=== find Exploits ==="
-          find build_root -type d -name "Exploits" || true
+          find "$GITHUB_WORKSPACE/build_root" -type d -name "Exploits" || true
+          echo "=== find fastPathSign ==="
+          find "$GITHUB_WORKSPACE/build_root" -type d -name "fastPathSign" || true
 
       - name: Fetch RATreeView
         run: |
@@ -48,10 +50,10 @@ jobs:
         id: build_fps
         continue-on-error: true
         run: |
-          FPS_DIR=$(find build_root -type d -name "fastPathSign" | head -n 1)
+          FPS_DIR=$(find "$GITHUB_WORKSPACE/build_root" -type d -name "fastPathSign" | head -n 1)
           if [ -z "$FPS_DIR" ]; then
             echo "fastPathSign dir not found"
-            find build_root -type d
+            find "$GITHUB_WORKSPACE/build_root" -type d
             exit 1
           fi
           echo "fastPathSign dir: $FPS_DIR"
@@ -72,18 +74,18 @@ jobs:
         id: build_helper
         continue-on-error: true
         run: |
-          RH_DIR=$(find build_root -type d -name "RootHelper" | head -n 1)
+          RH_DIR=$(find "$GITHUB_WORKSPACE/build_root" -type d -name "RootHelper" | head -n 1)
           if [ -z "$RH_DIR" ]; then
             echo "RootHelper dir not found"
-            find build_root -type d
+            find "$GITHUB_WORKSPACE/build_root" -type d
             exit 1
           fi
           echo "RootHelper dir: $RH_DIR"
 
-          EXPLOITS_DIR=$(find build_root -type d -name "Exploits" | head -n 1)
+          EXPLOITS_DIR=$(find "$GITHUB_WORKSPACE/build_root" -type d -name "Exploits" | head -n 1)
           if [ -z "$EXPLOITS_DIR" ]; then
             echo "Exploits dir not found"
-            find build_root -type d
+            find "$GITHUB_WORKSPACE/build_root" -type d
             exit 1
           fi
 
@@ -102,6 +104,13 @@ jobs:
           ls -la "$RH_DIR/archive.h" "$RH_DIR/archive_entry.h" || true
 
           cd "$RH_DIR"
+
+          if [ -f "unarchive.m" ]; then
+            sed -i '' 's|#include <archive.h>|#include "archive.h"|' unarchive.m || true
+            sed -i '' 's|#include <archive_entry.h>|#include "archive_entry.h"|' unarchive.m || true
+            echo "=== unarchive.m head ==="
+            head -n 5 unarchive.m
+          fi
 
           if [ -f "Makefile" ]; then
             echo "Patching Makefile to add -I."
@@ -125,10 +134,10 @@ jobs:
             make -j$(sysctl -n hw.ncpu)
           fi
 
-          HELPER_PATH=$(find .theos -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
+          HELPER_PATH=$(find "$RH_DIR/.theos" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
           if [ -z "$HELPER_PATH" ]; then
             echo "trollstorehelper output not found"
-            find .theos -type f
+            find "$RH_DIR/.theos" -type f
             exit 1
           fi
 
@@ -154,7 +163,7 @@ jobs:
       - name: Fallback to prebuilt trollstorehelper
         if: steps.build_helper.outcome != 'success'
         run: |
-          PREBUILT=$(find build_root -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
+          PREBUILT=$(find "$GITHUB_WORKSPACE/build_root" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
           if [ -z "$PREBUILT" ]; then
             echo "No prebuilt trollstorehelper found"
             exit 1
