@@ -153,8 +153,6 @@ jobs:
           otool -L "$GITHUB_WORKSPACE/trollstorehelper_built" || true
           echo "=== nm csd/apply/fat ==="
           nm "$GITHUB_WORKSPACE/trollstorehelper_built" 2>/dev/null | grep -i "csd_code_directory_update\|apply_coretrust\|fat_init_from_path" || true
-          echo "=== nm -u (undefined) ==="
-          nm -u "$GITHUB_WORKSPACE/trollstorehelper_built" 2>/dev/null | head -n 50 || true
 
       - name: Sign trollstorehelper
         if: steps.build_helper.outcome == 'success' && steps.build_fps.outcome == 'success'
@@ -169,15 +167,18 @@ jobs:
         if: steps.build_helper.outcome != 'success'
         run: |
           PREBUILT=$(find "$GITHUB_WORKSPACE/build_root" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
-          cp "$PREBUILT" trollstorehelper_built
-          chmod 755 trollstorehelper_built
+          if [ -n "$PREBUILT" ]; then
+            cp "$PREBUILT" trollstorehelper_built
+            chmod 755 trollstorehelper_built
+          fi
 
       - name: Upload helper
-        if: steps.build_helper.outcome != 'success'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: trollstorehelper
           path: trollstorehelper_built
+          if-no-files-found: warn
 
       - name: Prepare Project
         if: steps.build_helper.outcome == 'success'
@@ -260,7 +261,13 @@ jobs:
         if: steps.build_helper.outcome == 'success'
         run: |
           cd project
+          echo "=== find TrollStore.app ==="
+          find .theos -name "TrollStore.app" -type d || true
           APP_PATH=$(find .theos -name "TrollStore.app" -type d | grep -v "_" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "TrollStore.app not found, skip TAR"
+            exit 0
+          fi
           cp ../trollstorehelper_built "$APP_PATH/trollstorehelper"
           chmod 755 "$APP_PATH/trollstorehelper"
           cp ldid "$APP_PATH/ldid"
@@ -270,8 +277,9 @@ jobs:
           tar -cvf ../TrollStore.tar -C $(dirname "$APP_PATH") TrollStore.app
 
       - name: Upload TAR
-        if: steps.build_helper.outcome == 'success'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: TrollStore.tar
           path: TrollStore.tar
+          if-no-files-found: warn
