@@ -34,8 +34,15 @@ jobs:
           find build_root -type d -name "RootHelper" || true
           echo "=== find Exploits ==="
           find build_root -type d -name "Exploits" || true
-          echo "=== find fastPathSign ==="
-          find build_root -type d -name "fastPathSign" || true
+
+      - name: Fetch RATreeView
+        run: |
+          git clone --depth 1 https://github.com/Augustyniak/RATreeView.git /tmp/RATreeView_src
+          mkdir -p project_deps/RATreeView
+          find /tmp/RATreeView_src -name "RATreeView*.h" -exec cp {} project_deps/RATreeView/ \;
+          find /tmp/RATreeView_src -name "RATreeView*.m" -exec cp {} project_deps/RATreeView/ \;
+          echo "=== RATreeView files ==="
+          ls -la project_deps/RATreeView
 
       - name: Build fastPathSign
         id: build_fps
@@ -146,8 +153,14 @@ jobs:
           cp -r build_root/TrollStore/Resources/* project/Resources/ || true
           cp build_root/TrollStore/ldid project/ || true
           cp build_root/TrollStore/TrollHelper project/ || true
+          cp -r project_deps/RATreeView project/RATreeView
+          cat > project/Bridging.h << 'EOF'
+          #import "RATreeView.h"
+          EOF
           echo "=== Files in project ==="
           ls -la project
+          echo "=== RATreeView ==="
+          ls -la project/RATreeView
 
       - name: Create Makefile and Entry Point
         if: steps.build_helper.outcome == 'success'
@@ -159,11 +172,12 @@ jobs:
           include $(THEOS)/makefiles/common.mk
 
           APPLICATION_NAME = TrollStore
-          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift
+          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift RATreeView/*.m
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
+          TrollStore_CFLAGS = -I./RATreeView
           TrollStore_LDFLAGS =
           TrollStore_RESOURCE_DIRS = Resources
-          TrollStore_SWIFTFLAGS = -parse-as-library
+          TrollStore_SWIFTFLAGS = -parse-as-library -import-objc-header ./Bridging.h
           include $(THEOS_MAKE_PATH)/application.mk
           EOF
 
