@@ -95,6 +95,17 @@ jobs:
             cp -r "$EXPLOITS_DIR" "$RH_PARENT/Exploits"
           fi
 
+          if [ ! -d "$RH_PARENT/ChOma" ]; then
+            echo "ChOma not found, cloning from opa334/ChOma"
+            git clone --recursive --depth 1 https://github.com/opa334/ChOma.git "$RH_PARENT/ChOma" || true
+          fi
+          if [ -d "$RH_PARENT/ChOma" ]; then
+            echo "=== ChOma contents ==="
+            ls -la "$RH_PARENT/ChOma"
+            echo "=== ChOma external ios ==="
+            ls -la "$RH_PARENT/ChOma/external/ios" || true
+          fi
+
           git clone --depth 1 --branch v3.7.4 https://github.com/libarchive/libarchive.git /tmp/libarchive_src
           ARCHIVE_H=$(find /tmp/libarchive_src -name "archive.h" | head -n 1)
           ARCHIVE_ENTRY_H=$(find /tmp/libarchive_src -name "archive_entry.h" | head -n 1)
@@ -113,6 +124,8 @@ jobs:
           fi
 
           if [ -f "Makefile" ]; then
+            echo "=== RootHelper Makefile ==="
+            cat Makefile
             echo "Patching Makefile to add -I."
             sed -i '' 's/trollstorehelper_CFLAGS = /trollstorehelper_CFLAGS = -I. /' Makefile || true
             make -j$(sysctl -n hw.ncpu) FINALPACKAGE=1
