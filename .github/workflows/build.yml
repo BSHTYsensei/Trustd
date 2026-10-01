@@ -25,16 +25,11 @@ jobs:
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "PATH=$THEOS/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Install deps
-        run: |
-          brew install libarchive openssl@3 pkg-config || true
-
       - name: Extract TrollStore.zip
         run: |
           unzip -o TrollStore.zip -d build_root
-          find "$GITHUB_WORKSPACE/build_root" -maxdepth 3 -type d
-          echo "=== all trollstorehelper files ==="
-          find "$GITHUB_WORKSPACE/build_root" -type f -name "trollstorehelper" ! -name "*.*" || true
+          echo "=== build_root/TrollStore ==="
+          ls -la build_root/TrollStore
 
       - name: Fetch RATreeView
         run: |
@@ -42,6 +37,8 @@ jobs:
           mkdir -p project_deps/RATreeView
           find /tmp/RATreeView_src -name "RATreeView*.h" -exec cp {} project_deps/RATreeView/ \;
           find /tmp/RATreeView_src -name "RATreeView*.m" -exec cp {} project_deps/RATreeView/ \;
+          echo "=== RATreeView files ==="
+          ls -la project_deps/RATreeView
 
       - name: Prepare Project
         run: |
@@ -52,19 +49,12 @@ jobs:
           cp build_root/TrollStore/AppListView.swift project/
           cp -r build_root/TrollStore/Resources/* project/Resources/
           cp build_root/TrollStore/ldid project/
+          cp build_root/TrollStore/trollstorehelper project/
           cp build_root/TrollStore/TrollHelper project/
+          chmod 755 project/ldid project/trollstorehelper project/TrollHelper
           cp -r project_deps/RATreeView project/RATreeView
           echo '#import "RATreeView.h"' > project/Bridging.h
-
-          TROLLHELPER=$(find "$GITHUB_WORKSPACE/build_root" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
-          if [ -z "$TROLLHELPER" ]; then
-            echo "trollstorehelper not found"
-            find "$GITHUB_WORKSPACE/build_root" -type f | head -n 60
-            exit 1
-          fi
-          echo "Found trollstorehelper at: $TROLLHELPER"
-          cp "$TROLLHELPER" project/trollstorehelper
-          chmod 755 project/trollstorehelper
+          echo "=== Files in project ==="
           ls -la project
 
       - name: Create Makefile and Entry Point
@@ -128,7 +118,7 @@ jobs:
           cd project
           make -j$(sysctl -n hw.ncpu)
 
-      - name: Inject Binaries and Package TAR
+      - name: Package TAR
         run: |
           cd project
           APP_PATH=$(find .theos -name "TrollStore.app" -type d | grep -v "_" | head -n 1)
@@ -137,12 +127,14 @@ jobs:
             find .theos -type d
             exit 1
           fi
+          echo "Found TrollStore.app at: $APP_PATH"
           cp trollstorehelper "$APP_PATH/trollstorehelper"
           chmod 755 "$APP_PATH/trollstorehelper"
           cp ldid "$APP_PATH/ldid"
           cp TrollHelper "$APP_PATH/TrollHelper"
           chmod 755 "$APP_PATH/ldid" "$APP_PATH/TrollHelper"
           rm -f "$APP_PATH/entitlements.plist"
+          echo "=== TrollStore.app contents ==="
           ls -la "$APP_PATH"
           tar -cvf ../TrollStore.tar -C $(dirname "$APP_PATH") TrollStore.app
 
