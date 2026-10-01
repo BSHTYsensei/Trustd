@@ -32,7 +32,6 @@ jobs:
       - name: Extract TrollStore.zip
         run: |
           unzip -o TrollStore.zip -d build_root
-          echo "=== full tree ==="
           find "$GITHUB_WORKSPACE/build_root" -maxdepth 4 -not -path "*__MACOSX*"
 
       - name: Fetch RATreeView
@@ -81,7 +80,9 @@ jobs:
           [ -n "$TSH" ] && cp "$TSH" project/TrollHelper
 
           chmod 755 project/ldid project/trollstorehelper project/TrollHelper 2>/dev/null || true
-          cp -r project_deps/RATreeView project/RATreeView
+
+          cp project_deps/RATreeView/*.h project/
+          cp project_deps/RATreeView/*.m project/
 
           cat > project/Bridging.h << 'EOF'
           #pragma clang diagnostic push
@@ -102,10 +103,10 @@ jobs:
           include $(THEOS)/makefiles/common.mk
 
           APPLICATION_NAME = TrollStore
-          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift RATreeView/*.m
+          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift RATreeView.m RATreeView+Enums.m RATreeView+Private.m RATreeView+TableView.m RATreeView+TableViewDelegate.m RATreeView+TableViewDataSource.m RATreeNode.m RATreeNodeItem.m RATreeNodeInfo.m
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
-          TrollStore_CFLAGS = -I./RATreeView -Wno-error -Wno-everything
-          TrollStore_OBJCFLAGS = -I./RATreeView -Wno-error -Wno-everything
+          TrollStore_CFLAGS = -Wno-error -Wno-everything
+          TrollStore_OBJCFLAGS = -Wno-error -Wno-everything
           TrollStore_RESOURCE_DIRS = Resources
           TrollStore_SWIFTFLAGS = -parse-as-library -import-objc-header ./Bridging.h
           include $(THEOS_MAKE_PATH)/application.mk
@@ -153,6 +154,7 @@ jobs:
       - name: Build App
         run: |
           cd project
+          ls -la
           make -j$(sysctl -n hw.ncpu)
 
       - name: Package TAR
