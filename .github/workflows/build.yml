@@ -34,8 +34,10 @@ jobs:
           find "$GITHUB_WORKSPACE/build_root" -type d -name "RootHelper" || true
           echo "=== find Exploits ==="
           find "$GITHUB_WORKSPACE/build_root" -type d -name "Exploits" || true
-          echo "=== find fastPathSign ==="
-          find "$GITHUB_WORKSPACE/build_root" -type d -name "fastPathSign" || true
+          echo "=== find ChOma ==="
+          find "$GITHUB_WORKSPACE/build_root" -type d -name "ChOma" || true
+          echo "=== find ChOma .a files ==="
+          find "$GITHUB_WORKSPACE/build_root" -name "*.a" || true
 
       - name: Fetch RATreeView
         run: |
@@ -95,16 +97,22 @@ jobs:
             cp -r "$EXPLOITS_DIR" "$RH_PARENT/Exploits"
           fi
 
-          if [ ! -d "$RH_PARENT/ChOma" ]; then
-            echo "ChOma not found, cloning from opa334/ChOma"
-            git clone --recursive --depth 1 https://github.com/opa334/ChOma.git "$RH_PARENT/ChOma" || true
+          CHOOMA_DIR=$(find "$GITHUB_WORKSPACE/build_root" -type d -name "ChOma" | head -n 1)
+          if [ -z "$CHOOMA_DIR" ]; then
+            echo "ChOma dir not found in build_root"
+            find "$GITHUB_WORKSPACE/build_root" -type d
+            exit 1
           fi
-          if [ -d "$RH_PARENT/ChOma" ]; then
-            echo "=== ChOma contents ==="
-            ls -la "$RH_PARENT/ChOma"
-            echo "=== ChOma external ios ==="
-            ls -la "$RH_PARENT/ChOma/external/ios" || true
+          echo "ChOma dir: $CHOOMA_DIR"
+          if [ "$(dirname "$CHOOMA_DIR")" != "$RH_PARENT" ]; then
+            echo "ChOma and RootHelper not siblings, copying"
+            cp -r "$CHOOMA_DIR" "$RH_PARENT/ChOma"
           fi
+
+          echo "=== ChOma contents ==="
+          ls -la "$RH_PARENT/ChOma"
+          echo "=== ChOma .a files ==="
+          find "$RH_PARENT/ChOma" -name "*.a" || true
 
           git clone --depth 1 --branch v3.7.4 https://github.com/libarchive/libarchive.git /tmp/libarchive_src
           ARCHIVE_H=$(find /tmp/libarchive_src -name "archive.h" | head -n 1)
