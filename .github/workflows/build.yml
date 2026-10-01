@@ -30,23 +30,21 @@ jobs:
           unzip -o TrollStore.zip -d build_root
           echo "=== build_root ==="
           ls -la build_root
-          echo "=== find fastPathSign ==="
-          find build_root -type d -name "fastPathSign" || true
           echo "=== find RootHelper.zip ==="
           find build_root -name "RootHelper.zip" || true
-          echo "=== find RootHelper dir ==="
-          find build_root -type d -name "RootHelper" || true
 
       - name: Build fastPathSign
         run: |
-          FPS_DIR=$(find build_root -type d -name "fastPathSign" | head -n 1)
-          if [ -z "$FPS_DIR" ]; then
+          git clone --recursive --depth 1 https://github.com/opa334/TrollStore.git /tmp/TrollStore_src
+          FPS_DIR=/tmp/TrollStore_src/Exploits/fastPathSign
+          if [ ! -d "$FPS_DIR" ]; then
             echo "fastPathSign dir not found"
+            find /tmp/TrollStore_src -type d -name "*fastPath*" || true
             exit 1
           fi
           echo "fastPathSign dir: $FPS_DIR"
           cd "$FPS_DIR"
-          make -j$(sysctl -n hw.ncpu)
+          make -j$(sysctl -n hw.ncpu) || make -j$(sysctl -n hw.ncpu)
           FPS_BIN=$(find "$FPS_DIR" -type f -name "fastPathSign" ! -name "*.*" | head -n 1)
           if [ -z "$FPS_BIN" ]; then
             echo "fastPathSign binary not found after build"
