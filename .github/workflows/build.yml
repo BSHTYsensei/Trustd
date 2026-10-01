@@ -60,15 +60,27 @@ jobs:
           AM=$(find "$ROOT" -name "AppManager.swift" | head -n 1)
           SV=$(find "$ROOT" -name "SettingsView.swift" | head -n 1)
           AL=$(find "$ROOT" -name "AppListView.swift" | head -n 1)
+          MTB=$(find "$ROOT" -name "MainTabBarController.swift" | head -n 1)
           RES=$(find "$ROOT" -type d -name "Resources" -not -path "*__MACOSX*" | head -n 1)
           LDID=$(find "$ROOT" -type f -name "ldid" ! -name "*.*" | head -n 1)
           TH=$(find "$ROOT" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
           TSH=$(find "$ROOT" -type f -name "TrollHelper" ! -name "*.*" | head -n 1)
 
+          echo "CS=$CS"
+          echo "AM=$AM"
+          echo "SV=$SV"
+          echo "AL=$AL"
+          echo "MTB=$MTB"
+          echo "RES=$RES"
+          echo "LDID=$LDID"
+          echo "TH=$TH"
+          echo "TSH=$TSH"
+
           [ -n "$CS" ] && cp "$CS" project/
           [ -n "$AM" ] && cp "$AM" project/
           [ -n "$SV" ] && cp "$SV" project/
           [ -n "$AL" ] && cp "$AL" project/
+          [ -n "$MTB" ] && cp "$MTB" project/
           [ -n "$RES" ] && cp -r "$RES"/* project/Resources/
           [ -n "$LDID" ] && cp "$LDID" project/ldid
           [ -n "$TH" ] && cp "$TH" project/trollstorehelper
@@ -98,7 +110,7 @@ jobs:
           include $(THEOS)/makefiles/common.mk
 
           APPLICATION_NAME = TrollStore
-          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift $(wildcard RA*.m)
+          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift MainTabBarController.swift TrollStoreApp.swift $(wildcard RA*.m)
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
           TrollStore_CFLAGS = -fobjc-arc -Wno-error -Wno-everything
           TrollStore_OBJCFLAGS = -fobjc-arc -Wno-error -Wno-everything
@@ -114,21 +126,14 @@ jobs:
           @main
           class TrollStoreAppDelegate: UIResponder, UIApplicationDelegate {
               var window: UIWindow?
+
               func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   window = UIWindow(frame: UIScreen.main.bounds)
-                  let appListVC = AppListViewController()
-                  let appListNav = UINavigationController(rootViewController: appListVC)
-                  appListNav.tabBarItem = UITabBarItem(title: NSLocalizedString("Apps", comment: ""), image: UIImage(systemName: "app"), tag: 0)
-                  let settingsVC = UIHostingController(rootView: SettingsView())
-                  settingsVC.title = NSLocalizedString("Settings", comment: "")
-                  let settingsNav = UINavigationController(rootViewController: settingsVC)
-                  settingsNav.tabBarItem = UITabBarItem(title: NSLocalizedString("Settings", comment: ""), image: UIImage(systemName: "gear"), tag: 1)
-                  let tabBarController = UITabBarController()
-                  tabBarController.viewControllers = [appListNav, settingsNav]
-                  window?.rootViewController = tabBarController
+                  window?.rootViewController = MainTabBarController()
                   window?.makeKeyAndVisible()
                   return true
               }
+
               func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
                   guard url.scheme == "apple-magnifier" else { return false }
                   guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
@@ -145,6 +150,17 @@ jobs:
               }
           }
           EOF
+
+      - name: Strip Scene Manifest
+        run: |
+          PLIST=project/Resources/Info.plist
+          if [ -f "$PLIST" ]; then
+            echo "=== Info.plist before ==="
+            /usr/libexec/PlistBuddy -c "Print" "$PLIST" | head -n 60
+            /usr/libexec/PlistBuddy -c "Delete :UIApplicationSceneManifest" "$PLIST" 2>/dev/null || true
+            echo "=== Info.plist after ==="
+            /usr/libexec/PlistBuddy -c "Print" "$PLIST" | head -n 60
+          fi
 
       - name: Build App
         run: |
