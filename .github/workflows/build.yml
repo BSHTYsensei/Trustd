@@ -28,6 +28,12 @@ jobs:
       - name: Install deps
         run: |
           brew install libarchive openssl@3 pkg-config || true
+          curl -L -o /tmp/ldid https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_macosx_arm64 || true
+          if [ -f /tmp/ldid ]; then
+            chmod +x /tmp/ldid
+            sudo cp /tmp/ldid /usr/local/bin/ldid
+            ldid -v || true
+          fi
 
       - name: Extract TrollStore.zip
         run: |
@@ -72,9 +78,6 @@ jobs:
           FPS_DIR=$(find "$GITHUB_WORKSPACE/build_root" -type d -name "fastPathSign" | head -n 1)
           FPS_SRC="$FPS_DIR/src"
           [ -d "$FPS_SRC" ] || exit 1
-          echo "FPS_SRC=$FPS_SRC"
-          echo "=== fastPathSign/src tree ==="
-          find "$FPS_SRC" -maxdepth 2 | head -n 60
 
           rm -rf "$ROOT_DIR/ChOma"
           mkdir -p "$ROOT_DIR/ChOma/src"
@@ -90,16 +93,9 @@ jobs:
           if [ -d "$FPS_SRC/Templates" ]; then
             mkdir -p "$ROOT_DIR/ChOma/src/Templates"
             cp -rf "$FPS_SRC/Templates/." "$ROOT_DIR/ChOma/src/Templates/"
-            echo "=== Templates ==="
-            ls -la "$ROOT_DIR/ChOma/src/Templates"
           fi
 
           cp /tmp/ChOma_src/external/ios/*.a "$ROOT_DIR/ChOma/external/ios/" 2>/dev/null || true
-
-          echo "=== ChOma/src files ==="
-          ls "$ROOT_DIR/ChOma/src"
-          echo "=== csd_code_directory_update location ==="
-          grep -l "csd_code_directory_update" "$ROOT_DIR/ChOma/src"/*.c || true
 
           cp "$(find /tmp/libarchive_src -name archive.h | head -n 1)" "$RH_DIR/"
           cp "$(find /tmp/libarchive_src -name archive_entry.h | head -n 1)" "$RH_DIR/"
@@ -120,9 +116,9 @@ jobs:
           trollstorehelper_FILES += $(wildcard ../ChOma/src/*.c)
           trollstorehelper_FILES += $(wildcard ../ChOma/src/*.m)
 
-          trollstorehelper_CFLAGS = -fobjc-arc -fmodules -Wno-everything -Wno-nonportable-include-path -I. -I../Shared -I../ChOma/src -I$(shell brew --prefix)/opt/libarchive/include -I$(shell brew --prefix)/opt/openssl@3/include
+          trollstorehelper_CFLAGS = -O0 -fobjc-arc -fmodules -Wno-everything -Wno-nonportable-include-path -I. -I../Shared -I../ChOma/src -I$(shell brew --prefix)/opt/libarchive/include -I$(shell brew --prefix)/opt/openssl@3/include
 
-          trollstorehelper_LDFLAGS = -L../ChOma/external/ios -lcrypto -larchive
+          trollstorehelper_LDFLAGS = -Wl,-no_dead_strip -Wl,-force_load,../ChOma/external/ios/libcrypto.a -L../ChOma/external/ios -lcrypto -larchive
 
           trollstorehelper_FRAMEWORKS = Foundation UIKit Security CoreFoundation CoreTelephony
           trollstorehelper_PRIVATE_FRAMEWORKS = SpringBoardServices BackBoardServices MobileContainerManager FrontBoardServices RunningBoardServices
@@ -137,13 +133,30 @@ jobs:
 
           HELPER_PATH=$(find "$RH_DIR/.theos" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
           if [ -z "$HELPER_PATH" ]; then
-            echo "trollstorehelper not found"
-            find "$RH_DIR/.theos" -type f | head -n 50
-            exit 1
+            UNSIGNED=$(find "$RH_DIR/.theos" -type f -name "trollstorehelper.unsigned" | head -n 1)
+            if [ -n "$UNSIGNED" ]; then
+              HELPER_PATH="$UNSIGNED"
+            else
+              echo "trollstorehelper not found"
+              find "$RH_DIR/.theos" -type f | head -n 50
+              exit 1
+            fi
           fi
           cp "$HELPER_PATH" "$GITHUB_WORKSPACE/trollstorehelper_built"
           chmod 755 "$GITHUB_WORKSPACE/trollstorehelper_built"
+
+          echo "=== file ==="
           file "$GITHUB_WORKSPACE/trollstorehelper_built"
+          echo "=== size ==="
+          ls -la "$GITHUB_WORKSPACE/trollstorehelper_built"
+          echo "=== otool -L ==="
+          otool -L "$GITHUB_WORKSPACE/trollstorehelper_built" || true
+          echo "=== nm csd/apply/fat ==="
+          nm "$GITHUB_WORKSPACE/trollstorehelper_built" 2>/dev/null | grep -i "csd_code_directory_update\|apply_coretrust\|fat_init_from_path" || true
+          echo "=== nm -u (undefined) ==="
+          nm -u "$GITHUB_WORKSPACE/trollstorehelper_built" 2>/dev/null | head -n 50 || true
+          echo "=== lipo ==="
+          lipo -info "$GITHUB_WORKSPACE/trollstorehelper_built" || true
 
       - name: Sign trollstorehelper
         if: steps.build_helper.outcome == 'success' && steps.build_fps.outcome == 'success'
