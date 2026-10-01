@@ -32,6 +32,7 @@ jobs:
       - name: Extract TrollStore.zip
         run: |
           unzip -o TrollStore.zip -d build_root
+          echo "=== full tree ==="
           find "$GITHUB_WORKSPACE/build_root" -maxdepth 4 -not -path "*__MACOSX*"
 
       - name: Fetch RATreeView
@@ -40,10 +41,6 @@ jobs:
           mkdir -p project_deps/RATreeView
           find /tmp/RATreeView_src -name "RATree*.h" -exec cp {} project_deps/RATreeView/ \;
           find /tmp/RATreeView_src -name "RATree*.m" -exec cp {} project_deps/RATreeView/ \;
-          find /tmp/RATreeView_src -name "RATreeNode*.h" -exec cp {} project_deps/RATreeView/ \;
-          find /tmp/RATreeView_src -name "RATreeNode*.m" -exec cp {} project_deps/RATreeView/ \;
-          find /tmp/RATreeView_src -name "RATreeView*.h" -exec cp {} project_deps/RATreeView/ \;
-          find /tmp/RATreeView_src -name "RATreeView*.m" -exec cp {} project_deps/RATreeView/ \;
           echo "=== RATreeView files ==="
           ls -la project_deps/RATreeView
 
@@ -103,7 +100,7 @@ jobs:
           include $(THEOS)/makefiles/common.mk
 
           APPLICATION_NAME = TrollStore
-          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift RATreeView.m RATreeView+Enums.m RATreeView+Private.m RATreeView+TableView.m RATreeView+TableViewDelegate.m RATreeView+TableViewDataSource.m RATreeNode.m RATreeNodeItem.m RATreeNodeInfo.m
+          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift $(wildcard RATree*.m)
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
           TrollStore_CFLAGS = -Wno-error -Wno-everything
           TrollStore_OBJCFLAGS = -Wno-error -Wno-everything
