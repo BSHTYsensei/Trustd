@@ -28,10 +28,8 @@ jobs:
       - name: Extract TrollStore.zip
         run: |
           unzip -o TrollStore.zip -d build_root
-          echo "=== build_root ==="
-          ls -la build_root
-          echo "=== find trollstorehelper ==="
-          find "$GITHUB_WORKSPACE/build_root" -maxdepth 3 -name "trollstorehelper" ! -name "*.*" || true
+          echo "=== full tree ==="
+          find "$GITHUB_WORKSPACE/build_root" -maxdepth 4 -not -path "*__MACOSX*"
 
       - name: Fetch RATreeView
         run: |
@@ -43,24 +41,39 @@ jobs:
       - name: Prepare Project
         run: |
           mkdir -p project/Resources
-          SRC=build_root/TrollStore
-          if [ ! -f "$SRC/trollstorehelper" ]; then
-            SRC=build_root
-          fi
-          echo "SRC=$SRC"
-          ls -la "$SRC"
+          ROOT="$GITHUB_WORKSPACE/build_root"
 
-          cp "$SRC"/CodeSigningInstaller.swift project/
-          cp "$SRC"/AppManager.swift project/
-          cp "$SRC"/SettingsView.swift project/
-          cp "$SRC"/AppListView.swift project/
-          cp -r "$SRC"/Resources/* project/Resources/
-          cp "$SRC"/ldid project/
-          cp "$SRC"/trollstorehelper project/
-          cp "$SRC"/TrollHelper project/
-          chmod 755 project/ldid project/trollstorehelper project/TrollHelper
+          CS=$(find "$ROOT" -name "CodeSigningInstaller.swift" | head -n 1)
+          AM=$(find "$ROOT" -name "AppManager.swift" | head -n 1)
+          SV=$(find "$ROOT" -name "SettingsView.swift" | head -n 1)
+          AL=$(find "$ROOT" -name "AppListView.swift" | head -n 1)
+          RES=$(find "$ROOT" -type d -name "Resources" -not -path "*__MACOSX*" | head -n 1)
+          LDID=$(find "$ROOT" -type f -name "ldid" ! -name "*.*" | head -n 1)
+          TH=$(find "$ROOT" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
+          TSH=$(find "$ROOT" -type f -name "TrollHelper" ! -name "*.*" | head -n 1)
+
+          echo "CS=$CS"
+          echo "AM=$AM"
+          echo "SV=$SV"
+          echo "AL=$AL"
+          echo "RES=$RES"
+          echo "LDID=$LDID"
+          echo "TH=$TH"
+          echo "TSH=$TSH"
+
+          [ -n "$CS" ] && cp "$CS" project/
+          [ -n "$AM" ] && cp "$AM" project/
+          [ -n "$SV" ] && cp "$SV" project/
+          [ -n "$AL" ] && cp "$AL" project/
+          [ -n "$RES" ] && cp -r "$RES"/* project/Resources/
+          [ -n "$LDID" ] && cp "$LDID" project/ldid
+          [ -n "$TH" ] && cp "$TH" project/trollstorehelper
+          [ -n "$TSH" ] && cp "$TSH" project/TrollHelper
+
+          chmod 755 project/ldid project/trollstorehelper project/TrollHelper 2>/dev/null || true
           cp -r project_deps/RATreeView project/RATreeView
           echo '#import "RATreeView.h"' > project/Bridging.h
+          echo "=== project contents ==="
           ls -la project
 
       - name: Create Makefile and Entry Point
@@ -133,12 +146,13 @@ jobs:
             find .theos -type d
             exit 1
           fi
-          cp trollstorehelper "$APP_PATH/trollstorehelper"
-          chmod 755 "$APP_PATH/trollstorehelper"
-          cp ldid "$APP_PATH/ldid"
-          cp TrollHelper "$APP_PATH/TrollHelper"
-          chmod 755 "$APP_PATH/ldid" "$APP_PATH/TrollHelper"
+          cp trollstorehelper "$APP_PATH/trollstorehelper" 2>/dev/null || true
+          chmod 755 "$APP_PATH/trollstorehelper" 2>/dev/null || true
+          cp ldid "$APP_PATH/ldid" 2>/dev/null || true
+          cp TrollHelper "$APP_PATH/TrollHelper" 2>/dev/null || true
+          chmod 755 "$APP_PATH/ldid" "$APP_PATH/TrollHelper" 2>/dev/null || true
           rm -f "$APP_PATH/entitlements.plist"
+          ls -la "$APP_PATH"
           tar -cvf ../TrollStore.tar -C $(dirname "$APP_PATH") TrollStore.app
 
       - name: Upload TAR
