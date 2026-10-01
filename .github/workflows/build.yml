@@ -33,6 +33,8 @@ jobs:
         run: |
           unzip -o TrollStore.zip -d build_root
           find "$GITHUB_WORKSPACE/build_root" -maxdepth 3 -type d
+          echo "=== all trollstorehelper files ==="
+          find "$GITHUB_WORKSPACE/build_root" -type f -name "trollstorehelper" ! -name "*.*" || true
 
       - name: Fetch RATreeView
         run: |
@@ -50,10 +52,19 @@ jobs:
           cp build_root/TrollStore/AppListView.swift project/
           cp -r build_root/TrollStore/Resources/* project/Resources/
           cp build_root/TrollStore/ldid project/
-          cp build_root/TrollStore/trollstorehelper project/
           cp build_root/TrollStore/TrollHelper project/
           cp -r project_deps/RATreeView project/RATreeView
           echo '#import "RATreeView.h"' > project/Bridging.h
+
+          TROLLHELPER=$(find "$GITHUB_WORKSPACE/build_root" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
+          if [ -z "$TROLLHELPER" ]; then
+            echo "trollstorehelper not found"
+            find "$GITHUB_WORKSPACE/build_root" -type f | head -n 60
+            exit 1
+          fi
+          echo "Found trollstorehelper at: $TROLLHELPER"
+          cp "$TROLLHELPER" project/trollstorehelper
+          chmod 755 project/trollstorehelper
           ls -la project
 
       - name: Create Makefile and Entry Point
