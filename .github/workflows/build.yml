@@ -25,6 +25,10 @@ jobs:
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "PATH=$THEOS/bin:$PATH" >> $GITHUB_ENV
 
+      - name: Install deps
+        run: |
+          brew install libarchive openssl@3 pkg-config || true
+
       - name: Extract TrollStore.zip
         run: |
           unzip -o TrollStore.zip -d build_root
@@ -35,8 +39,14 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/Augustyniak/RATreeView.git /tmp/RATreeView_src
           mkdir -p project_deps/RATreeView
+          find /tmp/RATreeView_src -name "RATree*.h" -exec cp {} project_deps/RATreeView/ \;
+          find /tmp/RATreeView_src -name "RATree*.m" -exec cp {} project_deps/RATreeView/ \;
+          find /tmp/RATreeView_src -name "RATreeNode*.h" -exec cp {} project_deps/RATreeView/ \;
+          find /tmp/RATreeView_src -name "RATreeNode*.m" -exec cp {} project_deps/RATreeView/ \;
           find /tmp/RATreeView_src -name "RATreeView*.h" -exec cp {} project_deps/RATreeView/ \;
           find /tmp/RATreeView_src -name "RATreeView*.m" -exec cp {} project_deps/RATreeView/ \;
+          echo "=== RATreeView files ==="
+          ls -la project_deps/RATreeView
 
       - name: Prepare Project
         run: |
@@ -72,7 +82,12 @@ jobs:
 
           chmod 755 project/ldid project/trollstorehelper project/TrollHelper 2>/dev/null || true
           cp -r project_deps/RATreeView project/RATreeView
-          echo '#import "RATreeView.h"' > project/Bridging.h
+          cat > project/Bridging.h << 'EOF'
+          #import "RATreeView.h"
+          #import "RATreeNodeInfo.h"
+          #import "RATreeNode.h"
+          #import "RATreeNodeItem.h"
+          EOF
           echo "=== project contents ==="
           ls -la project
 
@@ -87,7 +102,7 @@ jobs:
           APPLICATION_NAME = TrollStore
           TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift TrollStoreApp.swift RATreeView/*.m
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
-          TrollStore_CFLAGS = -I./RATreeView
+          TrollStore_CFLAGS = -I./RATreeView -Wno-error -Wno-deprecated-declarations -Wno-switch -Wno-return-type -Wno-everything
           TrollStore_RESOURCE_DIRS = Resources
           TrollStore_SWIFTFLAGS = -parse-as-library -import-objc-header ./Bridging.h
           include $(THEOS_MAKE_PATH)/application.mk
