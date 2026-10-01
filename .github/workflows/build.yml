@@ -67,23 +67,15 @@ jobs:
         run: |
           RH_DIR=$(find "$GITHUB_WORKSPACE/build_root" -type d -name "RootHelper" | head -n 1)
           [ -z "$RH_DIR" ] && exit 1
-          RH_PARENT=$(dirname "$RH_DIR")
+          ROOT_DIR=$(dirname "$RH_DIR")
           echo "RH_DIR=$RH_DIR"
+          echo "ROOT_DIR=$ROOT_DIR"
 
-          # 官方 ChOma 直接放到 RootHelper 同级
-          rm -rf "$RH_PARENT/ChOma"
-          cp -r /tmp/ChOma_src "$RH_PARENT/ChOma"
-          echo "=== ChOma/src ==="
-          ls -la "$RH_PARENT/ChOma/src" | head -n 50
+          # ChOma 放到 $ROOT_DIR/ChOma，和 RootHelper 同级
+          rm -rf "$ROOT_DIR/ChOma"
+          cp -r /tmp/ChOma_src "$ROOT_DIR/ChOma"
           echo "=== ChOma/external/ios ==="
-          ls -la "$RH_PARENT/ChOma/external/ios"
-
-          # Exploits 放到 RootHelper 同级（保留 fastPathSign 的 coretrust_bug.c 和 codesign.m）
-          EXPLOITS_DIR=$(find "$GITHUB_WORKSPACE/build_root" -type d -name "Exploits" | head -n 1)
-          if [ -n "$EXPLOITS_DIR" ]; then
-            rm -rf "$RH_PARENT/Exploits"
-            cp -r "$EXPLOITS_DIR" "$RH_PARENT/Exploits"
-          fi
+          ls -la "$ROOT_DIR/ChOma/external/ios"
 
           # libarchive 头文件
           cp "$(find /tmp/libarchive_src -name archive.h | head -n 1)" "$RH_DIR/"
@@ -104,8 +96,8 @@ jobs:
           trollstorehelper_FILES += $(wildcard ../Shared/TSUtil.m)
           trollstorehelper_FILES += $(wildcard ../ChOma/src/*.c)
           trollstorehelper_FILES += $(wildcard ../ChOma/src/*.m)
-          trollstorehelper_FILES += $(wildcard ../Exploits/fastPathSign/src/coretrust_bug.c)
-          trollstorehelper_FILES += $(wildcard ../Exploits/fastPathSign/src/codesign.m)
+          trollstorehelper_FILES += ../Exploits/fastPathSign/src/coretrust_bug.c
+          trollstorehelper_FILES += ../Exploits/fastPathSign/src/codesign.m
 
           trollstorehelper_CFLAGS = -fobjc-arc -fmodules -Wno-everything -Wno-nonportable-include-path -I. -I../Shared -I../ChOma/include -I../ChOma/src -I../Exploits/fastPathSign/src -I$(shell brew --prefix)/opt/libarchive/include -I$(shell brew --prefix)/opt/openssl@3/include
 
@@ -119,8 +111,6 @@ jobs:
 
           include $(THEOS_MAKE_PATH)/tool.mk
           EOF
-
-          cat Makefile
 
           make -j$(sysctl -n hw.ncpu) FINALPACKAGE=1
 
