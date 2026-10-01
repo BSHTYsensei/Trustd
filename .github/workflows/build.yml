@@ -34,10 +34,6 @@ jobs:
           find "$GITHUB_WORKSPACE/build_root" -type d -name "RootHelper" || true
           echo "=== find Exploits ==="
           find "$GITHUB_WORKSPACE/build_root" -type d -name "Exploits" || true
-          echo "=== find ChOma ==="
-          find "$GITHUB_WORKSPACE/build_root" -type d -name "ChOma" || true
-          echo "=== find ChOma .a files ==="
-          find "$GITHUB_WORKSPACE/build_root" -name "*.a" || true
 
       - name: Fetch RATreeView
         run: |
@@ -47,6 +43,14 @@ jobs:
           find /tmp/RATreeView_src -name "RATreeView*.m" -exec cp {} project_deps/RATreeView/ \;
           echo "=== RATreeView files ==="
           ls -la project_deps/RATreeView
+
+      - name: Fetch ChOma
+        run: |
+          git clone --recursive --depth 1 https://github.com/opa334/ChOma.git /tmp/ChOma_src
+          echo "=== ChOma root ==="
+          ls -la /tmp/ChOma_src
+          echo "=== ChOma .a files ==="
+          find /tmp/ChOma_src -name "*.a" || true
 
       - name: Build fastPathSign
         id: build_fps
@@ -97,22 +101,17 @@ jobs:
             cp -r "$EXPLOITS_DIR" "$RH_PARENT/Exploits"
           fi
 
-          CHOOMA_DIR=$(find "$GITHUB_WORKSPACE/build_root" -type d -name "ChOma" | head -n 1)
-          if [ -z "$CHOOMA_DIR" ]; then
-            echo "ChOma dir not found in build_root"
-            find "$GITHUB_WORKSPACE/build_root" -type d
-            exit 1
+          if [ ! -d "$RH_PARENT/ChOma" ]; then
+            echo "Copying ChOma into $RH_PARENT/ChOma"
+            cp -r /tmp/ChOma_src "$RH_PARENT/ChOma"
           fi
-          echo "ChOma dir: $CHOOMA_DIR"
-          if [ "$(dirname "$CHOOMA_DIR")" != "$RH_PARENT" ]; then
-            echo "ChOma and RootHelper not siblings, copying"
-            cp -r "$CHOOMA_DIR" "$RH_PARENT/ChOma"
-          fi
-
           echo "=== ChOma contents ==="
-          ls -la "$RH_PARENT/ChOma"
+          ls -la "$RH_PARENT/ChOma" || true
           echo "=== ChOma .a files ==="
           find "$RH_PARENT/ChOma" -name "*.a" || true
+          echo "=== ChOma external ios ==="
+          ls -la "$RH_PARENT/ChOma/external/ios" || true
+          ls -la "$RH_PARENT/ChOma/external" || true
 
           git clone --depth 1 --branch v3.7.4 https://github.com/libarchive/libarchive.git /tmp/libarchive_src
           ARCHIVE_H=$(find /tmp/libarchive_src -name "archive.h" | head -n 1)
