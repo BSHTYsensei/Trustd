@@ -45,12 +45,8 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/opa334/ChOma.git /tmp/ChOma_src
           git clone --depth 1 --branch v3.7.4 https://github.com/libarchive/libarchive.git /tmp/libarchive_src
-          echo "=== ChOma include ==="
-          ls -la /tmp/ChOma_src/include || true
-          echo "=== ChOma src headers ==="
-          ls -la /tmp/ChOma_src/src/*.h 2>/dev/null | head -n 20 || true
-          echo "=== ChOma external/ios ==="
-          ls -la /tmp/ChOma_src/external/ios || true
+          echo "=== ChOma src ==="
+          ls -la /tmp/ChOma_src/src | head -n 40
 
       - name: Build fastPathSign
         id: build_fps
@@ -65,7 +61,7 @@ jobs:
           chmod 755 "$FPS_BIN"
           echo "FASTPATHSIGN_PATH=$FPS_BIN" >> $GITHUB_ENV
 
-      - name: Prepare RootHelper for Makefile build
+      - name: Build trollstorehelper
         id: build_helper
         continue-on-error: true
         run: |
@@ -73,56 +69,46 @@ jobs:
           [ -z "$RH_DIR" ] && exit 1
           RH_PARENT=$(dirname "$RH_DIR")
           echo "RH_DIR=$RH_DIR"
-          echo "RH_PARENT=$RH_PARENT"
 
           FPS_DIR=$(find "$GITHUB_WORKSPACE/build_root" -type d -name "fastPathSign" | head -n 1)
           FPS_SRC="$FPS_DIR/src"
           [ -d "$FPS_SRC" ] || exit 1
 
-          # 把 Exploits 放到 RH_PARENT（RootHelper 同级）
           EXPLOITS_DIR=$(find "$GITHUB_WORKSPACE/build_root" -type d -name "Exploits" | head -n 1)
           if [ -n "$EXPLOITS_DIR" ] && [ "$(dirname "$EXPLOITS_DIR")" != "$RH_PARENT" ]; then
             cp -r "$EXPLOITS_DIR" "$RH_PARENT/Exploits"
           fi
 
-          # 把 ChOma 源码放到 RH_PARENT/ChOma（RootHelper 同级）
           rm -rf "$RH_PARENT/ChOma"
           mkdir -p "$RH_PARENT/ChOma/src"
           mkdir -p "$RH_PARENT/ChOma/include"
           mkdir -p "$RH_PARENT/ChOma/external/ios"
 
-          for f in "$FPS_SRC"/*.c "$FPS_SRC"/*.m "$FPS_SRC"/*.h; do
+          # ChOma 官方头文件先拷（保持大小写）
+          cp -r /tmp/ChOma_src/src/*.h "$RH_PARENT/ChOma/src/"
+          if [ -d /tmp/ChOma_src/include ]; then
+            cp -r /tmp/ChOma_src/include/* "$RH_PARENT/ChOma/include/" 2>/dev/null || true
+          fi
+
+          # fastPathSign/src 只拷 .c/.m，不拷 .h
+          for f in "$FPS_SRC"/*.c "$FPS_SRC"/*.m; do
             [ -e "$f" ] || continue
             base=$(basename "$f")
             case "$base" in main.c|main.m) continue ;; esac
             cp "$f" "$RH_PARENT/ChOma/src/"
           done
 
-          # ChOma 的官方头文件
-          if [ -d /tmp/ChOma_src/include ]; then
-            cp -r /tmp/ChOma_src/include/* "$RH_PARENT/ChOma/include/" 2>/dev/null || true
-          fi
-          if [ -d /tmp/ChOma_src/src ]; then
-            for f in /tmp/ChOma_src/src/*.h; do
-              [ -e "$f" ] && cp "$f" "$RH_PARENT/ChOma/src/"
-            done
-          fi
+          # libcrypto.a / libssl.a
+          cp /tmp/ChOma_src/external/ios/*.a "$RH_PARENT/ChOma/external/ios/" 2>/dev/null || true
 
-          # ChOma 的 libcrypto.a / libssl.a
-          if [ -d /tmp/ChOma_src/external/ios ]; then
-            cp /tmp/ChOma_src/external/ios/*.a "$RH_PARENT/ChOma/external/ios/" 2>/dev/null || true
-          fi
-
-          # libarchive 头文件拷到 RootHelper
+          # libarchive 头文件
           cp "$(find /tmp/libarchive_src -name archive.h | head -n 1)" "$RH_DIR/"
           cp "$(find /tmp/libarchive_src -name archive_entry.h | head -n 1)" "$RH_DIR/"
 
-          # 修 unarchive.m 的 include
           cd "$RH_DIR"
           sed -i '' 's|#include <archive.h>|#include "archive.h"|' unarchive.m || true
           sed -i '' 's|#include <archive_entry.h>|#include "archive_entry.h"|' unarchive.m || true
 
-          # 覆盖 Makefile
           cat > Makefile << 'EOF'
           TARGET := iphone:clang:16.5:14.0
           ARCHS = arm64
@@ -137,7 +123,7 @@ jobs:
           trollstorehelper_FILES += $(wildcard ../Exploits/fastPathSign/src/coretrust_bug.c)
           trollstorehelper_FILES += $(wildcard ../Exploits/fastPathSign/src/codesign.m)
 
-          trollstorehelper_CFLAGS = -fobjc-arc -fmodules -I. -I../Shared -I../ChOma/include -I../ChOma/src -I../Exploits/fastPathSign/src -I$(shell brew --prefix)/opt/libarchive/include -I$(shell brew --prefix)/opt/openssl@3/include
+          trollstorehelper_CFLAGS = -fobjc-arc -fmodules -Wno-everything -Wno-nonportable-include-path -I. -I../Shared -I../ChOma/include -I../ChOma/src -I../Exploits/fastPathSign/src -I$(shell brew --prefix)/opt/libarchive/include -I$(shell brew --prefix)/opt/openssl@3/include
 
           trollstorehelper_LDFLAGS = -L../ChOma/external/ios -lcrypto -larchive
 
@@ -150,12 +136,7 @@ jobs:
           include $(THEOS_MAKE_PATH)/tool.mk
           EOF
 
-          echo "=== RootHelper Makefile ==="
           cat Makefile
-          echo "=== ChOma/src files ==="
-          ls -la "$RH_PARENT/ChOma/src" | head -n 40
-          echo "=== ChOma/external/ios ==="
-          ls -la "$RH_PARENT/ChOma/external/ios"
 
           make -j$(sysctl -n hw.ncpu) FINALPACKAGE=1
 
