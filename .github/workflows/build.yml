@@ -93,8 +93,37 @@ jobs:
             cp -r "$EXPLOITS_DIR" "$RH_PARENT/Exploits"
           fi
 
+          git clone --depth 1 --branch v3.7.4 https://github.com/libarchive/libarchive.git /tmp/libarchive_src
+          ARCHIVE_H=$(find /tmp/libarchive_src -name "archive.h" | head -n 1)
+          ARCHIVE_ENTRY_H=$(find /tmp/libarchive_src -name "archive_entry.h" | head -n 1)
+          if [ -n "$ARCHIVE_H" ]; then cp "$ARCHIVE_H" "$RH_DIR/"; fi
+          if [ -n "$ARCHIVE_ENTRY_H" ]; then cp "$ARCHIVE_ENTRY_H" "$RH_DIR/"; fi
+          echo "=== archive headers ==="
+          ls -la "$RH_DIR/archive.h" "$RH_DIR/archive_entry.h" || true
+
           cd "$RH_DIR"
-          make -j$(sysctl -n hw.ncpu) FINALPACKAGE=1
+
+          if [ -f "Makefile" ]; then
+            echo "Patching Makefile to add -I."
+            sed -i '' 's/trollstorehelper_CFLAGS = /trollstorehelper_CFLAGS = -I. /' Makefile || true
+            make -j$(sysctl -n hw.ncpu) FINALPACKAGE=1
+          else
+            echo "No Makefile found, generating one"
+            cat > Makefile << 'EOF'
+          ARCHS = arm64
+          TARGET = iphone:clang:16.5:15.0
+          include $(THEOS)/makefiles/common.mk
+
+          TOOL_NAME = trollstorehelper
+          trollstorehelper_FILES = $(wildcard *.m) $(wildcard *.c) $(wildcard *.cpp) $(wildcard *.mm)
+          trollstorehelper_FRAMEWORKS = Foundation UIKit Security CoreFoundation SpringBoardServices FrontBoardServices
+          trollstorehelper_LDFLAGS = -larchive -lplist -lroot -lz -lbz2 -llzma -liconv
+          trollstorehelper_CFLAGS = -DEMBEDDED_ROOT_HELPER -I.
+          trollstorehelper_SWIFTFLAGS =
+          include $(THEOS_MAKE_PATH)/tool.mk
+          EOF
+            make -j$(sysctl -n hw.ncpu)
+          fi
 
           HELPER_PATH=$(find .theos -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
           if [ -z "$HELPER_PATH" ]; then
