@@ -30,21 +30,26 @@ jobs:
           unzip -o TrollStore.zip -d build_root
           echo "=== build_root ==="
           ls -la build_root
-          echo "=== find RootHelper.zip ==="
-          find build_root -name "RootHelper.zip" || true
+          echo "=== find RootHelper ==="
+          find build_root -type d -name "RootHelper" || true
+          echo "=== find Exploits ==="
+          find build_root -type d -name "Exploits" || true
+          echo "=== find fastPathSign ==="
+          find build_root -type d -name "fastPathSign" || true
 
       - name: Build fastPathSign
+        id: build_fps
+        continue-on-error: true
         run: |
-          git clone --recursive --depth 1 https://github.com/opa334/TrollStore.git /tmp/TrollStore_src
-          FPS_DIR=/tmp/TrollStore_src/Exploits/fastPathSign
-          if [ ! -d "$FPS_DIR" ]; then
+          FPS_DIR=$(find build_root -type d -name "fastPathSign" | head -n 1)
+          if [ -z "$FPS_DIR" ]; then
             echo "fastPathSign dir not found"
-            find /tmp/TrollStore_src -type d -name "*fastPath*" || true
+            find build_root -type d
             exit 1
           fi
           echo "fastPathSign dir: $FPS_DIR"
           cd "$FPS_DIR"
-          make -j$(sysctl -n hw.ncpu) || make -j$(sysctl -n hw.ncpu)
+          make -j$(sysctl -n hw.ncpu)
           FPS_BIN=$(find "$FPS_DIR" -type f -name "fastPathSign" ! -name "*.*" | head -n 1)
           if [ -z "$FPS_BIN" ]; then
             echo "fastPathSign binary not found after build"
@@ -56,49 +61,33 @@ jobs:
           echo "fastPathSign built at: $FPS_BIN"
           ls -la "$FPS_BIN"
 
-      - name: Extract RootHelper.zip and Build trollstorehelper
+      - name: Build trollstorehelper
         id: build_helper
         continue-on-error: true
         run: |
-          RH_ZIP=$(find build_root -name "RootHelper.zip" | head -n 1)
-          if [ -z "$RH_ZIP" ]; then
-            echo "RootHelper.zip not found"
-            exit 1
-          fi
-          echo "RootHelper.zip: $RH_ZIP"
-          mkdir -p project_helper
-          unzip -o "$RH_ZIP" -d project_helper
-          echo "=== project_helper contents ==="
-          ls -la project_helper
-
-          RH_DIR=$(find project_helper -type d -name "RootHelper" | head -n 1)
+          RH_DIR=$(find build_root -type d -name "RootHelper" | head -n 1)
           if [ -z "$RH_DIR" ]; then
-            RH_DIR="project_helper"
+            echo "RootHelper dir not found"
+            find build_root -type d
+            exit 1
           fi
           echo "RootHelper dir: $RH_DIR"
 
-          cd "$RH_DIR"
-
-          if [ -f "Makefile" ]; then
-            echo "Using existing Makefile"
-            make -j$(sysctl -n hw.ncpu) FINALPACKAGE=1
-          else
-            echo "No Makefile found, generating one"
-            cat > Makefile << 'EOF'
-          ARCHS = arm64
-          TARGET = iphone:clang:16.5:15.0
-          include $(THEOS)/makefiles/common.mk
-
-          TOOL_NAME = trollstorehelper
-          trollstorehelper_FILES = $(wildcard *.m) $(wildcard *.c) $(wildcard *.cpp) $(wildcard *.mm)
-          trollstorehelper_FRAMEWORKS = Foundation UIKit Security CoreFoundation SpringBoardServices FrontBoardServices
-          trollstorehelper_LDFLAGS = -larchive -lplist -lroot -lz -lbz2 -llzma -liconv
-          trollstorehelper_CFLAGS = -DEMBEDDED_ROOT_HELPER
-          trollstorehelper_SWIFTFLAGS =
-          include $(THEOS_MAKE_PATH)/tool.mk
-          EOF
-            make -j$(sysctl -n hw.ncpu)
+          EXPLOITS_DIR=$(find build_root -type d -name "Exploits" | head -n 1)
+          if [ -z "$EXPLOITS_DIR" ]; then
+            echo "Exploits dir not found"
+            find build_root -type d
+            exit 1
           fi
+
+          RH_PARENT=$(dirname "$RH_DIR")
+          if [ "$(dirname "$EXPLOITS_DIR")" != "$RH_PARENT" ]; then
+            echo "Exploits and RootHelper not siblings, copying"
+            cp -r "$EXPLOITS_DIR" "$RH_PARENT/Exploits"
+          fi
+
+          cd "$RH_DIR"
+          make -j$(sysctl -n hw.ncpu) FINALPACKAGE=1
 
           HELPER_PATH=$(find .theos -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
           if [ -z "$HELPER_PATH" ]; then
@@ -107,13 +96,13 @@ jobs:
             exit 1
           fi
 
-          cp "$HELPER_PATH" ../../trollstorehelper_built
-          chmod 755 ../../trollstorehelper_built
-          echo "helper built: ../../trollstorehelper_built"
-          ls -la ../../trollstorehelper_built
+          cp "$HELPER_PATH" "$GITHUB_WORKSPACE/trollstorehelper_built"
+          chmod 755 "$GITHUB_WORKSPACE/trollstorehelper_built"
+          echo "helper built: $GITHUB_WORKSPACE/trollstorehelper_built"
+          ls -la "$GITHUB_WORKSPACE/trollstorehelper_built"
 
       - name: Sign trollstorehelper with fastPathSign
-        if: steps.build_helper.outcome == 'success'
+        if: steps.build_helper.outcome == 'success' && steps.build_fps.outcome == 'success'
         run: |
           echo "Signing with $FASTPATHSIGN_PATH"
           cp trollstorehelper_built trollstorehelper_to_sign
