@@ -37,10 +37,40 @@ jobs:
           which ldid || true
           ldid -v || true
 
+      - name: Build libarchive for iOS arm64
+        run: |
+          cd /tmp
+          curl -L -o libarchive.tar.gz https://github.com/libarchive/libarchive/releases/download/v3.7.4/libarchive-3.7.4.tar.gz
+          tar xzf libarchive.tar.gz
+          cd libarchive-3.7.4
+          SDK=$THEOS/sdks/iPhoneOS16.5.sdk
+          ./configure \
+            --host=arm64-apple-darwin \
+            --disable-shared \
+            --enable-static \
+            --without-bz2lib \
+            --without-lzma \
+            --without-lzo2 \
+            --without-lz4 \
+            --without-zstd \
+            --without-nettle \
+            --without-openssl \
+            --without-xml2 \
+            --without-expat \
+            --without-iconv \
+            CC="$(xcrun --sdk macosx --find clang)" \
+            CFLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 -Wno-everything" \
+            CPPFLAGS="-isysroot $SDK" \
+            LDFLAGS="-arch arm64 -isysroot $SDK"
+          make -j$(sysctl -n hw.ncpu)
+          echo "=== libarchive.a ==="
+          ls -la .libs/libarchive.a || ls -la libarchive.a
+          cp .libs/libarchive.a /tmp/libarchive_ios.a 2>/dev/null || cp libarchive.a /tmp/libarchive_ios.a
+          lipo -info /tmp/libarchive_ios.a || file /tmp/libarchive_ios.a
+
       - name: Extract TrollStore.zip
         run: |
           unzip -o TrollStore.zip -d build_root
-          echo "=== full tree ==="
           find "$GITHUB_WORKSPACE/build_root" -maxdepth 4 -not -path "*__MACOSX*"
 
       - name: Prepare Project
@@ -59,17 +89,6 @@ jobs:
           TH=$(find "$ROOT" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
           TSH=$(find "$ROOT" -type f -name "TrollHelper" ! -name "*.*" | head -n 1)
 
-          echo "CS=$CS"
-          echo "AM=$AM"
-          echo "SV=$SV"
-          echo "AL=$AL"
-          echo "MTB=$MTB"
-          echo "TSA=$TSA"
-          echo "RES=$RES"
-          echo "LDID=$LDID"
-          echo "TH=$TH"
-          echo "TSH=$TSH"
-
           [ -n "$CS" ] && cp "$CS" project/
           [ -n "$AM" ] && cp "$AM" project/
           [ -n "$SV" ] && cp "$SV" project/
@@ -83,7 +102,7 @@ jobs:
 
           chmod 755 project/ldid project/trollstorehelper project/TrollHelper 2>/dev/null || true
 
-          echo "=== project contents ==="
+          cp /tmp/libarchive_ios.a project/libarchive.a
           ls -la project
 
       - name: Create Makefile
@@ -99,6 +118,7 @@ jobs:
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
           TrollStore_CFLAGS = -Wno-error -Wno-everything
           TrollStore_OBJCFLAGS = -Wno-error -Wno-everything
+          TrollStore_LDFLAGS = libarchive.a -lz
           TrollStore_RESOURCE_DIRS = Resources
           TrollStore_SWIFTFLAGS = -parse-as-library
           include $(THEOS_MAKE_PATH)/application.mk
@@ -109,7 +129,6 @@ jobs:
           PLIST=project/Resources/Info.plist
           if [ -f "$PLIST" ]; then
             /usr/libexec/PlistBuddy -c "Delete :UIApplicationSceneManifest" "$PLIST" 2>/dev/null || true
-            echo "=== Info.plist ==="
             /usr/libexec/PlistBuddy -c "Print" "$PLIST" | head -n 60
           fi
 
@@ -134,7 +153,6 @@ jobs:
           cp TrollHelper "$APP_PATH/TrollHelper" 2>/dev/null || true
           chmod 755 "$APP_PATH/ldid" "$APP_PATH/TrollHelper" 2>/dev/null || true
           rm -f "$APP_PATH/entitlements.plist"
-          ls -la "$APP_PATH"
           tar -cvf ../TrollStore.tar -C $(dirname "$APP_PATH") TrollStore.app
 
       - name: Upload TAR
