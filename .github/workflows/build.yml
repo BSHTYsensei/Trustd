@@ -40,16 +40,8 @@ jobs:
       - name: Extract TrollStore.zip
         run: |
           unzip -o TrollStore.zip -d build_root
+          echo "=== full tree ==="
           find "$GITHUB_WORKSPACE/build_root" -maxdepth 4 -not -path "*__MACOSX*"
-
-      - name: Fetch RATreeView
-        run: |
-          git clone --depth 1 https://github.com/Augustyniak/RATreeView.git /tmp/RATreeView_src
-          mkdir -p project_deps/RATreeView
-          find /tmp/RATreeView_src -name "*.h" -not -path "*Tests*" -not -path "*Example*" -exec cp {} project_deps/RATreeView/ \;
-          find /tmp/RATreeView_src -name "*.m" -not -path "*Tests*" -not -path "*Example*" -exec cp {} project_deps/RATreeView/ \;
-          echo "=== RATreeView files ==="
-          ls -la project_deps/RATreeView
 
       - name: Prepare Project
         run: |
@@ -61,6 +53,7 @@ jobs:
           SV=$(find "$ROOT" -name "SettingsView.swift" | head -n 1)
           AL=$(find "$ROOT" -name "AppListView.swift" | head -n 1)
           MTB=$(find "$ROOT" -name "MainTabBarController.swift" | head -n 1)
+          TSA=$(find "$ROOT" -name "TrollStoreApp.swift" | head -n 1)
           RES=$(find "$ROOT" -type d -name "Resources" -not -path "*__MACOSX*" | head -n 1)
           LDID=$(find "$ROOT" -type f -name "ldid" ! -name "*.*" | head -n 1)
           TH=$(find "$ROOT" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
@@ -71,6 +64,7 @@ jobs:
           echo "SV=$SV"
           echo "AL=$AL"
           echo "MTB=$MTB"
+          echo "TSA=$TSA"
           echo "RES=$RES"
           echo "LDID=$LDID"
           echo "TH=$TH"
@@ -81,6 +75,7 @@ jobs:
           [ -n "$SV" ] && cp "$SV" project/
           [ -n "$AL" ] && cp "$AL" project/
           [ -n "$MTB" ] && cp "$MTB" project/
+          [ -n "$TSA" ] && cp "$TSA" project/
           [ -n "$RES" ] && cp -r "$RES"/* project/Resources/
           [ -n "$LDID" ] && cp "$LDID" project/ldid
           [ -n "$TH" ] && cp "$TH" project/trollstorehelper
@@ -88,20 +83,10 @@ jobs:
 
           chmod 755 project/ldid project/trollstorehelper project/TrollHelper 2>/dev/null || true
 
-          cp project_deps/RATreeView/*.h project/
-          cp project_deps/RATreeView/*.m project/
-
-          cat > project/Bridging.h << 'EOF'
-          #pragma clang diagnostic push
-          #pragma clang diagnostic ignored "-Weverything"
-          #import "RATreeView.h"
-          #pragma clang diagnostic pop
-          EOF
-
           echo "=== project contents ==="
           ls -la project
 
-      - name: Create Makefile and Entry Point
+      - name: Create Makefile
         run: |
           cat << 'EOF' > project/Makefile
           ARCHS = arm64
@@ -110,55 +95,21 @@ jobs:
           include $(THEOS)/makefiles/common.mk
 
           APPLICATION_NAME = TrollStore
-          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift MainTabBarController.swift TrollStoreApp.swift $(wildcard RA*.m)
+          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift MainTabBarController.swift TrollStoreApp.swift
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
-          TrollStore_CFLAGS = -fobjc-arc -Wno-error -Wno-everything
-          TrollStore_OBJCFLAGS = -fobjc-arc -Wno-error -Wno-everything
+          TrollStore_CFLAGS = -Wno-error -Wno-everything
+          TrollStore_OBJCFLAGS = -Wno-error -Wno-everything
           TrollStore_RESOURCE_DIRS = Resources
-          TrollStore_SWIFTFLAGS = -parse-as-library -import-objc-header ./Bridging.h
+          TrollStore_SWIFTFLAGS = -parse-as-library
           include $(THEOS_MAKE_PATH)/application.mk
-          EOF
-
-          cat << 'EOF' > project/TrollStoreApp.swift
-          import UIKit
-          import SwiftUI
-
-          @main
-          class TrollStoreAppDelegate: UIResponder, UIApplicationDelegate {
-              var window: UIWindow?
-
-              func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-                  window = UIWindow(frame: UIScreen.main.bounds)
-                  window?.rootViewController = MainTabBarController()
-                  window?.makeKeyAndVisible()
-                  return true
-              }
-
-              func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
-                  guard url.scheme == "apple-magnifier" else { return false }
-                  guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
-                  if components.host == "install" {
-                      if let installURLString = components.queryItems?.first(where: { $0.name == "url" })?.value,
-                         let installURL = URL(string: installURLString) {
-                          DispatchQueue.main.async {
-                              NotificationCenter.default.post(name: Notification.Name("TrollStoreRemoteInstall"), object: installURL)
-                          }
-                          return true
-                      }
-                  }
-                  return false
-              }
-          }
           EOF
 
       - name: Strip Scene Manifest
         run: |
           PLIST=project/Resources/Info.plist
           if [ -f "$PLIST" ]; then
-            echo "=== Info.plist before ==="
-            /usr/libexec/PlistBuddy -c "Print" "$PLIST" | head -n 60
             /usr/libexec/PlistBuddy -c "Delete :UIApplicationSceneManifest" "$PLIST" 2>/dev/null || true
-            echo "=== Info.plist after ==="
+            echo "=== Info.plist ==="
             /usr/libexec/PlistBuddy -c "Print" "$PLIST" | head -n 60
           fi
 
