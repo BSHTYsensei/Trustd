@@ -77,33 +77,66 @@ jobs:
         run: |
           mkdir -p project/Resources
           ROOT="$GITHUB_WORKSPACE/build_root"
+          REPO="$GITHUB_WORKSPACE"
 
-          CS=$(find "$ROOT" -name "CodeSigningInstaller.swift" | head -n 1)
-          AM=$(find "$ROOT" -name "AppManager.swift" | head -n 1)
-          SV=$(find "$ROOT" -name "SettingsView.swift" | head -n 1)
-          AL=$(find "$ROOT" -name "AppListView.swift" | head -n 1)
-          MTB=$(find "$ROOT" -name "MainTabBarController.swift" | head -n 1)
-          TSA=$(find "$ROOT" -name "TrollStoreApp.swift" | head -n 1)
+          # 优先用仓库根目录的 TrollStore.swift，其次用 zip 里的
+          SWIFT_FILE=$(find "$REPO" -maxdepth 2 -name "TrollStore.swift" -not -path "*/.git/*" | head -n 1)
+          if [ -z "$SWIFT_FILE" ]; then
+            SWIFT_FILE=$(find "$ROOT" -name "TrollStore.swift" -not -path "*__MACOSX*" | head -n 1)
+          fi
+          if [ -z "$SWIFT_FILE" ]; then
+            echo "TrollStore.swift not found"
+            exit 1
+          fi
+          cp "$SWIFT_FILE" project/TrollStore.swift
+
+          # Resources
           RES=$(find "$ROOT" -type d -name "Resources" -not -path "*__MACOSX*" | head -n 1)
-          LDID=$(find "$ROOT" -type f -name "ldid" ! -name "*.*" | head -n 1)
-          TH=$(find "$ROOT" -type f -name "trollstorehelper" ! -name "*.*" | head -n 1)
-          TSH=$(find "$ROOT" -type f -name "TrollHelper" ! -name "*.*" | head -n 1)
+          if [ -n "$RES" ]; then
+            cp -r "$RES"/* project/Resources/ 2>/dev/null || true
+          fi
+          if [ -d "$REPO/Resources" ]; then
+            cp -r "$REPO/Resources"/* project/Resources/ 2>/dev/null || true
+          fi
 
-          [ -n "$CS" ] && cp "$CS" project/
-          [ -n "$AM" ] && cp "$AM" project/
-          [ -n "$SV" ] && cp "$SV" project/
-          [ -n "$AL" ] && cp "$AL" project/
-          [ -n "$MTB" ] && cp "$MTB" project/
-          [ -n "$TSA" ] && cp "$TSA" project/
-          [ -n "$RES" ] && cp -r "$RES"/* project/Resources/
+          # 二进制文件
+          LDID=$(find "$ROOT" -type f -name "ldid" ! -name "*.*" -not -path "*__MACOSX*" | head -n 1)
+          TH=$(find "$ROOT" -type f -name "trollstorehelper" ! -name "*.*" -not -path "*__MACOSX*" | head -n 1)
+          TSH=$(find "$ROOT" -type f -name "TrollHelper" ! -name "*.*" -not -path "*__MACOSX*" | head -n 1)
+
+          [ -z "$LDID" ] && [ -f "$REPO/ldid" ] && LDID="$REPO/ldid"
+          [ -z "$TH" ] && [ -f "$REPO/trollstorehelper" ] && TH="$REPO/trollstorehelper"
+          [ -z "$TSH" ] && [ -f "$REPO/TrollHelper" ] && TSH="$REPO/TrollHelper"
+
           [ -n "$LDID" ] && cp "$LDID" project/ldid
           [ -n "$TH" ] && cp "$TH" project/trollstorehelper
           [ -n "$TSH" ] && cp "$TSH" project/TrollHelper
-
           chmod 755 project/ldid project/trollstorehelper project/TrollHelper 2>/dev/null || true
+
+          # 没有 Info.plist 就生成一个最小的
+          if [ ! -f project/Resources/Info.plist ]; then
+            cat > project/Resources/Info.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>TrollStore</string>
+            <key>CFBundleIdentifier</key><string>com.example.TrollStore</string>
+            <key>CFBundleName</key><string>TrollStore</string>
+            <key>CFBundleDisplayName</key><string>TrollStore</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>1.0</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>MinimumOSVersion</key><string>15.0</string>
+            <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+          </dict>
+          </plist>
+          PLIST
+          fi
 
           cp /tmp/libarchive_ios.a project/libarchive.a
           ls -la project
+          ls -la project/Resources || true
 
       - name: Create Makefile
         run: |
@@ -114,8 +147,8 @@ jobs:
           include $(THEOS)/makefiles/common.mk
 
           APPLICATION_NAME = TrollStore
-          TrollStore_FILES = CodeSigningInstaller.swift AppManager.swift SettingsView.swift AppListView.swift MainTabBarController.swift TrollStoreApp.swift
-          TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security
+          TrollStore_FILES = TrollStore.swift
+          TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security UniformTypeIdentifiers
           TrollStore_CFLAGS = -Wno-error -Wno-everything
           TrollStore_OBJCFLAGS = -Wno-error -Wno-everything
           TrollStore_LDFLAGS = libarchive.a -lz
@@ -130,6 +163,8 @@ jobs:
           if [ -f "$PLIST" ]; then
             /usr/libexec/PlistBuddy -c "Delete :UIApplicationSceneManifest" "$PLIST" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Print" "$PLIST" | head -n 60
+          else
+            echo "Warning: project/Resources/Info.plist not found, skipping."
           fi
 
       - name: Build App
