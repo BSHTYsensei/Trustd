@@ -1,0 +1,216 @@
+name: LegacyLiquidGlass V2 AI Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Liquid Glass V2 upgrade task
+        required: true
+        default: Build complete LegacyLiquidGlass V2
+
+
+permissions:
+  contents: read
+
+
+jobs:
+
+  generate:
+
+    runs-on: macos-14
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+
+      - name: Install OpenAI SDK
+        run: |
+          pip install openai
+
+
+      - name: Collect Source
+        run: |
+          mkdir -p context
+          find . -name "*.swift" -not -path "./.git/*" > context/files.txt
+
+
+      - name: Generate V2
+        env:
+          OPENAI_API_KEY: ${{ secrets.iOS }}
+          TASK: ${{ github.event.inputs.task }}
+
+        run: |
+
+          python3 <<'PY'
+
+import os
+from openai import OpenAI
+
+
+client = OpenAI(
+    api_key=os.environ["OPENAI_API_KEY"]
+)
+
+
+source = ""
+
+
+if os.path.exists("context/files.txt"):
+
+    with open("context/files.txt") as f:
+
+        for item in f:
+
+            path = item.strip()
+
+            if os.path.exists(path):
+
+                with open(
+                    path,
+                    encoding="utf-8",
+                    errors="ignore"
+                ) as swift:
+
+                    source += swift.read()
+
+
+
+prompt = """
+You are a senior Apple graphics framework engineer.
+
+Create:
+
+LegacyLiquidGlassV2.swift
+
+
+Research public information about:
+
+- Apple Liquid Glass
+- GlassEffectContainer
+- UIGlassEffect
+- Metal rendering
+- Backdrop capture
+- Refraction
+- Fresnel
+- SDF morphing
+
+
+Requirements:
+
+- Swift 5.9+
+- iOS 13+
+- UIKit
+- SwiftUI
+- Metal renderer
+- No private API
+
+
+Architecture:
+
+Core
+- Runtime
+- Configuration
+- Backend selector
+
+
+Renderer
+- MTLDevice
+- Texture cache
+- Backdrop system
+- Blur
+- Refraction
+- Specular
+- Composite
+
+
+Material:
+
+- thickness
+- transmission
+- roughness
+- tint
+
+
+Morph:
+
+- SDF
+- smooth union
+- liquid animation
+
+
+Performance:
+
+- FPS control
+- thermal adjustment
+- quality scaling
+
+
+Components:
+
+LLGlassView
+LLGlassButton
+LLGlassToolbar
+LLGlassTabBar
+
+
+SwiftUI:
+
+.llGlass()
+.llGlassContainer()
+
+
+Output only Swift source.
+"""
+
+
+result = client.responses.create(
+    model="gpt-5",
+    input=prompt + "\nExisting:\n" + source
+)
+
+
+with open(
+    "LegacyLiquidGlassV2.swift",
+    "w",
+    encoding="utf-8"
+) as file:
+
+    file.write(
+        result.output_text
+    )
+
+
+print("Done")
+
+PY
+
+
+
+      - name: Swift Parse
+
+        run: |
+
+          swiftc \
+          -frontend \
+          -parse \
+          LegacyLiquidGlassV2.swift
+
+
+
+      - name: Upload
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: LegacyLiquidGlassV2
+
+          path: LegacyLiquidGlassV2.swift
