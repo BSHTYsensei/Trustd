@@ -168,22 +168,42 @@ jobs:
           fi
 
           echo "----- before -----"
-          grep -n "darkerSystemColorsStatus\|isDarkerSystemColorsEnabled\|isIncreaseContrastEnabled" "$FILE" || true
+          grep -n "darkerSystemColorsStatus\|isDarkerSystemColorsEnabled" "$FILE" || true
 
-          # 1) darkerSystemColorsStatus  ->  isDarkerSystemColorsEnabled
-          sed -i '' \
-            's/UIAccessibility\.darkerSystemColorsStatus/UIAccessibility.isDarkerSystemColorsEnabled/g' \
-            "$FILE"
+          python3 - "$FILE" << 'PYEOF'
+          import sys
 
-          # 2) increaseContrast 之前错误地读了 isDarkerSystemColorsEnabled，改成 isIncreaseContrastEnabled
-          sed -i '' \
-            's/increaseContrast = UIAccessibility\.isDarkerSystemColorsEnabled/increaseContrast = UIAccessibility.isIncreaseContrastEnabled/g' \
-            "$FILE"
+          path = sys.argv[1]
+          OLD = "= UIAccessibility.darkerSystemColorsStatus"
+          NEW = "= UIAccessibility.isDarkerSystemColorsEnabled"
+
+          with open(path, "r", encoding="utf-8") as f:
+              lines = f.readlines()
+
+          out = []
+          changed = 0
+          for line in lines:
+              stripped = line.rstrip("\n").rstrip("\r")
+              if stripped.endswith(OLD):
+                  new_stripped = stripped[: -len(OLD)] + NEW
+                  if line.endswith("\r\n"):
+                      line = new_stripped + "\r\n"
+                  elif line.endswith("\n"):
+                      line = new_stripped + "\n"
+                  else:
+                      line = new_stripped
+                  changed += 1
+              out.append(line)
+
+          with open(path, "w", encoding="utf-8") as f:
+              f.writelines(out)
+
+          print(f"Replaced {changed} line(s).")
+          PYEOF
 
           echo "----- after -----"
-          grep -n "darkerSystemColorsStatus\|isDarkerSystemColorsEnabled\|isIncreaseContrastEnabled" "$FILE" || true
+          grep -n "darkerSystemColorsStatus\|isDarkerSystemColorsEnabled" "$FILE" || true
 
-          # 导出打补丁后的文件供 artifact 使用
           cp "$FILE" "$GITHUB_WORKSPACE/LegacyLiquidGlass.swift"
 
       - name: Create Makefile
