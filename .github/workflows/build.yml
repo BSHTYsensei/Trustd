@@ -219,86 +219,34 @@ jobs:
 
           path = sys.argv[1]
           with open(path, "r", encoding="utf-8") as f:
-              content = f.read()
+              c = f.read()
 
-          # 1) SettingsView 是 struct，不能用 [weak self]。
-          #    整段 executeHelperCommand 里把 [weak self] 与两个 guard let self = self 去掉。
-          old_body = '''    private func executeHelperCommand(args: [String], completion: ((Bool) -> Void)? = nil) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                let ret = try RootHelper.execute(args: args)
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    if ret != 0 {
-                        self.errorTitle = String(format: TSLocalized("Error %d", comment: ""), Int(ret))
-                        self.errorMessage = TSLocalized("Command failed.", comment: "")
-                        self.showErrorAlert = true
-                    }
-                    completion?(ret == 0)
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    self.errorTitle = TSLocalized("Error", comment: "")
-                    self.errorMessage = TSLocalized("Failed to spawn helper.", comment: "")
-                    self.showErrorAlert = true
-                    completion?(false)
-                }
-            }
-        }
-    }'''
+          old1 = "private func executeHelperCommand(args: [String], completion: ((Bool) -> Void)? = nil) {\n        DispatchQueue.global(qos: .userInitiated).async { [weak self] in"
+          new1 = "private func executeHelperCommand(args: [String], completion: ((Bool) -> Void)? = nil) {\n        DispatchQueue.global(qos: .userInitiated).async {"
+          n1 = c.count(old1)
+          c = c.replace(old1, new1)
+          print(f"[OK] [weak self] removed: {n1}")
 
-          new_body = '''    private func executeHelperCommand(args: [String], completion: ((Bool) -> Void)? = nil) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                let ret = try RootHelper.execute(args: args)
-                DispatchQueue.main.async {
-                    if ret != 0 {
-                        self.errorTitle = String(format: TSLocalized("Error %d", comment: ""), Int(ret))
-                        self.errorMessage = TSLocalized("Command failed.", comment: "")
-                        self.showErrorAlert = true
-                    }
-                    completion?(ret == 0)
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.errorTitle = TSLocalized("Error", comment: "")
-                    self.errorMessage = TSLocalized("Failed to spawn helper.", comment: "")
-                    self.showErrorAlert = true
-                    completion?(false)
-                }
-            }
-        }
-    }'''
+          old2 = "DispatchQueue.main.async {\n                    guard let self = self else { return }\n                    if ret != 0 {"
+          new2 = "DispatchQueue.main.async {\n                    if ret != 0 {"
+          n2 = c.count(old2)
+          c = c.replace(old2, new2)
+          print(f"[OK] guard1 removed: {n2}")
 
-          if old_body in content:
-              content = content.replace(old_body, new_body)
-              print("[OK] executeHelperCommand body replaced")
-          else:
-              print("[WARN] executeHelperCommand body not matched, doing minimal fallback")
-              content = content.replace(
-                  "private func executeHelperCommand(args: [String], completion: ((Bool) -> Void)? = nil) {\n        DispatchQueue.global(qos: .userInitiated).async { [weak self] in",
-                  "private func executeHelperCommand(args: [String], completion: ((Bool) -> Void)? = nil) {\n        DispatchQueue.global(qos: .userInitiated).async {"
-              )
-              content = content.replace(
-                  "                DispatchQueue.main.async {\n                    guard let self = self else { return }\n                    if ret != 0 {",
-                  "                DispatchQueue.main.async {\n                    if ret != 0 {"
-              )
-              content = content.replace(
-                  "                DispatchQueue.main.async {\n                    guard let self = self else { return }\n                    self.errorTitle = TSLocalized(\"Error\", comment: \"\")",
-                  "                DispatchQueue.main.async {\n                    self.errorTitle = TSLocalized(\"Error\", comment: \"\")"
-              )
+          old3 = "DispatchQueue.main.async {\n                    guard let self = self else { return }\n                    self.errorTitle = TSLocalized(\"Error\", comment: \"\")"
+          new3 = "DispatchQueue.main.async {\n                    self.errorTitle = TSLocalized(\"Error\", comment: \"\")"
+          n3 = c.count(old3)
+          c = c.replace(old3, new3)
+          print(f"[OK] guard2 removed: {n3}")
 
-          # 2) Configuration 没有 tint，改用 style = .tinted(...)
-          count_tint = content.count("selected.tint = .systemBlue")
-          content = content.replace(
-              "selected.tint = .systemBlue",
-              "selected.style = .tinted(.systemBlue)"
-          )
-          print(f"[OK] selected.tint replaced: {count_tint}")
+          old4 = "selected.tint = .systemBlue"
+          new4 = "selected.style = .tinted(.systemBlue)"
+          n4 = c.count(old4)
+          c = c.replace(old4, new4)
+          print(f"[OK] selected.tint replaced: {n4}")
 
           with open(path, "w", encoding="utf-8") as f:
-              f.write(content)
+              f.write(c)
           PYEOF
 
           echo "----- after grep -----"
