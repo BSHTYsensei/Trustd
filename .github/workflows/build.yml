@@ -79,7 +79,6 @@ jobs:
           ROOT="$GITHUB_WORKSPACE/build_root"
           REPO="$GITHUB_WORKSPACE"
 
-          # 优先用打完补丁的 TrollStore.modified.swift
           SWIFT_FILE=$(find "$ROOT" -name "TrollStore.modified.swift" -not -path "*__MACOSX*" | head -n 1)
           if [ -z "$SWIFT_FILE" ]; then
             SWIFT_FILE=$(find "$ROOT" -name "TrollStore.swift" -not -path "*__MACOSX*" | head -n 1)
@@ -94,14 +93,12 @@ jobs:
           echo "Swift file: $SWIFT_FILE"
           cp "$SWIFT_FILE" project/TrollStore.swift
 
-          # 顺带把 LegacyLiquidGlass.swift 也拷进来（如果存在，LegacyLiquidGlass 会用到）
           LEGACY=$(find "$ROOT" -name "LegacyLiquidGlass.swift" -not -path "*__MACOSX*" | head -n 1)
           if [ -n "$LEGACY" ]; then
             echo "Legacy file: $LEGACY"
             cp "$LEGACY" project/LegacyLiquidGlass.swift
           fi
 
-          # Resources
           RES=$(find "$ROOT" -type d -name "Resources" -not -path "*__MACOSX*" | head -n 1)
           if [ -n "$RES" ]; then
             rsync -a --exclude='*.diff' --exclude='*.patch' --exclude='__MACOSX' --exclude='.DS_Store' "$RES"/ project/Resources/ 2>/dev/null || true
@@ -110,7 +107,6 @@ jobs:
             rsync -a --exclude='*.diff' --exclude='*.patch' --exclude='__MACOSX' --exclude='.DS_Store' "$REPO/Resources"/ project/Resources/ 2>/dev/null || true
           fi
 
-          # 本地化 strings：把压缩包里的 Localizable.strings 放进 lproj
           LOCALIZED_SRC=$(find "$ROOT" -maxdepth 2 -name "Localizable.strings" -not -path "*__MACOSX*" | head -n 1)
           if [ -n "$LOCALIZED_SRC" ]; then
             echo "Found Localizable.strings: $LOCALIZED_SRC"
@@ -118,7 +114,6 @@ jobs:
             cp "$LOCALIZED_SRC" project/Resources/zh-Hans.lproj/Localizable.strings
           fi
 
-          # 二进制
           LDID=$(find "$ROOT" -type f -name "ldid" ! -name "*.*" -not -path "*__MACOSX*" | head -n 1)
           TH=$(find "$ROOT" -type f -name "trollstorehelper" ! -name "*.*" -not -path "*__MACOSX*" | head -n 1)
           TSH=$(find "$ROOT" -type f -name "TrollHelper" ! -name "*.*" -not -path "*__MACOSX*" | head -n 1)
@@ -132,7 +127,6 @@ jobs:
           [ -n "$TSH" ] && cp "$TSH" project/TrollHelper
           chmod 755 project/ldid project/trollstorehelper project/TrollHelper 2>/dev/null || true
 
-          # 若压缩包里没有 Info.plist 就补一个
           if [ ! -f project/Resources/Info.plist ]; then
             cat > project/Resources/Info.plist << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -165,6 +159,33 @@ jobs:
           echo "----- Resources tree -----"
           find project/Resources -maxdepth 3 || true
 
+      - name: Patch LegacyLiquidGlass API
+        run: |
+          FILE=project/LegacyLiquidGlass.swift
+          if [ ! -f "$FILE" ]; then
+            echo "LegacyLiquidGlass.swift not found, skipping"
+            exit 0
+          fi
+
+          echo "----- before -----"
+          grep -n "darkerSystemColorsStatus\|isDarkerSystemColorsEnabled\|isIncreaseContrastEnabled" "$FILE" || true
+
+          # 1) darkerSystemColorsStatus  ->  isDarkerSystemColorsEnabled
+          sed -i '' \
+            's/UIAccessibility\.darkerSystemColorsStatus/UIAccessibility.isDarkerSystemColorsEnabled/g' \
+            "$FILE"
+
+          # 2) increaseContrast 之前错误地读了 isDarkerSystemColorsEnabled，改成 isIncreaseContrastEnabled
+          sed -i '' \
+            's/increaseContrast = UIAccessibility\.isDarkerSystemColorsEnabled/increaseContrast = UIAccessibility.isIncreaseContrastEnabled/g' \
+            "$FILE"
+
+          echo "----- after -----"
+          grep -n "darkerSystemColorsStatus\|isDarkerSystemColorsEnabled\|isIncreaseContrastEnabled" "$FILE" || true
+
+          # 导出打补丁后的文件供 artifact 使用
+          cp "$FILE" "$GITHUB_WORKSPACE/LegacyLiquidGlass.swift"
+
       - name: Create Makefile
         run: |
           cat << 'EOF' > project/Makefile
@@ -175,7 +196,7 @@ jobs:
 
           APPLICATION_NAME = TrollStore
           TrollStore_FILES = TrollStore.swift LegacyLiquidGlass.swift
-          TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security UniformTypeIdentifiers
+          TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security UniformTypeIdentifiers Metal MetalKit QuartzCore CoreVideo
           TrollStore_CFLAGS = -Wno-error -Wno-everything
           TrollStore_OBJCFLAGS = -Wno-error -Wno-everything
           TrollStore_LDFLAGS = libarchive.a -lz
@@ -224,5 +245,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: TrollStore.tar
-          path: TrollStore.tar
+          path: |
+            TrollStore.tar
+            LegacyLiquidGlass.swift
           if-no-files-found: warn
