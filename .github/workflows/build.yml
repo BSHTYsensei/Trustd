@@ -73,79 +73,17 @@ jobs:
           unzip -o TrollStore.zip -d build_root
           find "$GITHUB_WORKSPACE/build_root" -maxdepth 4 -not -path "*__MACOSX*"
 
-      - name: Apply TrollStore.diff
-        run: |
-          set -e
-          ROOT="$GITHUB_WORKSPACE/build_root"
-
-          # 找 diff 文件：优先 build_root，其次仓库根目录
-          DIFF=$(find "$ROOT" -name "TrollStore.diff" -not -path "*__MACOSX*" | head -n 1)
-          if [ -z "$DIFF" ]; then
-            DIFF=$(find "$GITHUB_WORKSPACE" -maxdepth 2 -name "TrollStore.diff" -not -path "*/.git/*" | head -n 1)
-          fi
-          if [ -z "$DIFF" ]; then
-            echo "TrollStore.diff not found"
-            exit 1
-          fi
-          echo "Using diff: $DIFF"
-          echo "----- diff head -----"
-          head -n 30 "$DIFF"
-          echo "---------------------"
-
-          # 判断补丁作用的基础目录：找 diff 里第一个文件的路径前缀
-          FIRST_PATH=$(grep -m1 '^+++ ' "$DIFF" | sed -E 's|^\+\+\+ +||' | sed -E 's|\t.*$||')
-          echo "First target in diff: $FIRST_PATH"
-
-          # 决定 cd 到哪一层
-          if [ -n "$FIRST_PATH" ] && [ -e "$ROOT/$FIRST_PATH" ]; then
-            BASE_DIR="$ROOT"
-          elif [ -n "$FIRST_PATH" ] && [ -e "$ROOT/$(echo "$FIRST_PATH" | sed -E 's|^[^/]+/||')" ]; then
-            BASE_DIR="$ROOT"
-          else
-            # 默认在 build_root 下
-            BASE_DIR="$ROOT"
-          fi
-          echo "Base dir: $BASE_DIR"
-
-          cd "$BASE_DIR"
-
-          # 优先 git apply，再 patch
-          if git apply --check "$DIFF" 2>/dev/null; then
-            git apply "$DIFF"
-            echo "Applied with: git apply"
-          elif git apply --check -p0 "$DIFF" 2>/dev/null; then
-            git apply -p0 "$DIFF"
-            echo "Applied with: git apply -p0"
-          elif git apply --check -p2 "$DIFF" 2>/dev/null; then
-            git apply -p2 "$DIFF"
-            echo "Applied with: git apply -p2"
-          elif patch -p1 --dry-run -N -r - < "$DIFF" >/dev/null 2>&1; then
-            patch -p1 -N -r - < "$DIFF"
-            echo "Applied with: patch -p1"
-          elif patch -p0 --dry-run -N -r - < "$DIFF" >/dev/null 2>&1; then
-            patch -p0 -N -r - < "$DIFF"
-            echo "Applied with: patch -p0"
-          elif patch -p2 --dry-run -N -r - < "$DIFF" >/dev/null 2>&1; then
-            patch -p2 -N -r - < "$DIFF"
-            echo "Applied with: patch -p2"
-          else
-            echo "!!! Patch could not be applied automatically"
-            echo "----- full diff -----"
-            cat "$DIFF"
-            exit 1
-          fi
-
-          echo "----- after patch, tree -----"
-          find "$ROOT" -maxdepth 3 -not -path "*__MACOSX*" -not -path "*/.git/*"
-
       - name: Prepare Project
         run: |
           mkdir -p project/Resources
           ROOT="$GITHUB_WORKSPACE/build_root"
           REPO="$GITHUB_WORKSPACE"
 
-          # TrollStore.swift：优先打了补丁的 build_root
-          SWIFT_FILE=$(find "$ROOT" -name "TrollStore.swift" -not -path "*__MACOSX*" | head -n 1)
+          # 优先用打完补丁的 TrollStore.modified.swift
+          SWIFT_FILE=$(find "$ROOT" -name "TrollStore.modified.swift" -not -path "*__MACOSX*" | head -n 1)
+          if [ -z "$SWIFT_FILE" ]; then
+            SWIFT_FILE=$(find "$ROOT" -name "TrollStore.swift" -not -path "*__MACOSX*" | head -n 1)
+          fi
           if [ -z "$SWIFT_FILE" ]; then
             SWIFT_FILE=$(find "$REPO" -maxdepth 2 -name "TrollStore.swift" -not -path "*/.git/*" | head -n 1)
           fi
@@ -156,6 +94,13 @@ jobs:
           echo "Swift file: $SWIFT_FILE"
           cp "$SWIFT_FILE" project/TrollStore.swift
 
+          # 顺带把 LegacyLiquidGlass.swift 也拷进来（如果存在，LegacyLiquidGlass 会用到）
+          LEGACY=$(find "$ROOT" -name "LegacyLiquidGlass.swift" -not -path "*__MACOSX*" | head -n 1)
+          if [ -n "$LEGACY" ]; then
+            echo "Legacy file: $LEGACY"
+            cp "$LEGACY" project/LegacyLiquidGlass.swift
+          fi
+
           # Resources
           RES=$(find "$ROOT" -type d -name "Resources" -not -path "*__MACOSX*" | head -n 1)
           if [ -n "$RES" ]; then
@@ -163,6 +108,14 @@ jobs:
           fi
           if [ -d "$REPO/Resources" ]; then
             rsync -a --exclude='*.diff' --exclude='*.patch' --exclude='__MACOSX' --exclude='.DS_Store' "$REPO/Resources"/ project/Resources/ 2>/dev/null || true
+          fi
+
+          # 本地化 strings：把压缩包里的 Localizable.strings 放进 lproj
+          LOCALIZED_SRC=$(find "$ROOT" -maxdepth 2 -name "Localizable.strings" -not -path "*__MACOSX*" | head -n 1)
+          if [ -n "$LOCALIZED_SRC" ]; then
+            echo "Found Localizable.strings: $LOCALIZED_SRC"
+            mkdir -p project/Resources/zh-Hans.lproj
+            cp "$LOCALIZED_SRC" project/Resources/zh-Hans.lproj/Localizable.strings
           fi
 
           # 二进制
@@ -179,6 +132,7 @@ jobs:
           [ -n "$TSH" ] && cp "$TSH" project/TrollHelper
           chmod 755 project/ldid project/trollstorehelper project/TrollHelper 2>/dev/null || true
 
+          # 若压缩包里没有 Info.plist 就补一个
           if [ ! -f project/Resources/Info.plist ]; then
             cat > project/Resources/Info.plist << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -206,6 +160,7 @@ jobs:
           fi
 
           cp /tmp/libarchive_ios.a project/libarchive.a
+          echo "----- project dir -----"
           ls -la project
           echo "----- Resources tree -----"
           find project/Resources -maxdepth 3 || true
@@ -219,7 +174,7 @@ jobs:
           include $(THEOS)/makefiles/common.mk
 
           APPLICATION_NAME = TrollStore
-          TrollStore_FILES = TrollStore.swift
+          TrollStore_FILES = TrollStore.swift LegacyLiquidGlass.swift
           TrollStore_FRAMEWORKS = UIKit SwiftUI Foundation CoreGraphics Security UniformTypeIdentifiers
           TrollStore_CFLAGS = -Wno-error -Wno-everything
           TrollStore_OBJCFLAGS = -Wno-error -Wno-everything
@@ -260,6 +215,8 @@ jobs:
           cp TrollHelper "$APP_PATH/TrollHelper" 2>/dev/null || true
           chmod 755 "$APP_PATH/ldid" "$APP_PATH/TrollHelper" 2>/dev/null || true
           rm -f "$APP_PATH/entitlements.plist"
+          echo "----- final .app tree -----"
+          find "$APP_PATH" -maxdepth 3
           tar -cvf ../TrollStore.tar -C $(dirname "$APP_PATH") TrollStore.app
 
       - name: Upload TAR
