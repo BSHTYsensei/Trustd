@@ -38,19 +38,24 @@ jobs:
     - name: Build ArgumentParser for iOS
       run: |
         cd ${{ env.SOURCE_DIR }}
-        mkdir -p build/ArgumentParser
-        AP_SOURCES=$(find swift-argument-parser/Sources/ArgumentParser -name "*.swift")
-        echo "找到 ArgumentParser 源文件 $(echo $AP_SOURCES | wc -w) 个"
+        mkdir -p ap-build
+        AP_DIR_ABS="$PWD/ap-build"
+
+        cd swift-argument-parser/Sources/ArgumentParser
+        echo "ArgumentParser 源文件数量: $(find . -name '*.swift' | wc -l)"
+
         xcrun --sdk iphoneos swiftc \
           -target arm64-apple-ios14.0 \
-          -sdk $SDKROOT \
+          -sdk "$SDKROOT" \
           -emit-module -emit-library -static \
           -module-name ArgumentParser \
           -swift-version 5 -O \
-          $AP_SOURCES \
-          -emit-module-path build/ArgumentParser/ArgumentParser.swiftmodule \
-          -o build/ArgumentParser/libArgumentParser.a
-        ls -la build/ArgumentParser/
+          $(find . -name "*.swift") \
+          -emit-module-path "$AP_DIR_ABS/ArgumentParser.swiftmodule" \
+          -o "$AP_DIR_ABS/libArgumentParser.a"
+
+        echo "编译产物:"
+        ls -la "$AP_DIR_ABS/"
       env:
         SDKROOT: ${{ github.workspace }}/sdk
 
