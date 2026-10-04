@@ -29,42 +29,54 @@ jobs:
         unzip -q Santander-main.zip -d source
         rm -rf source/__MACOSX
         echo "SOURCE_DIR=$(find source -maxdepth 1 -type d -not -name '__MACOSX' | tail -n 1)" >> $GITHUB_ENV
-        ls -la ${{ env.SOURCE_DIR }}
 
     - name: Download ArgumentParser 1.0.3
       run: |
         cd ${{ env.SOURCE_DIR }}
         curl -L -o ap.tar.gz https://github.com/apple/swift-argument-parser/archive/refs/tags/1.0.3.tar.gz
         tar -xzf ap.tar.gz
-        ls -la swift-argument-parser-1.0.3/Sources/ArgumentParser/
+        ls -la swift-argument-parser-1.0.3/Sources/
 
     - name: Build ArgumentParser for iOS
       run: |
         cd ${{ env.SOURCE_DIR }}
         mkdir -p ap-build
         AP_DIR_ABS="$PWD/ap-build"
-        AP_SRC="$PWD/swift-argument-parser-1.0.3/Sources/ArgumentParser"
+        AP_ROOT="$PWD/swift-argument-parser-1.0.3/Sources"
 
-        if [ ! -d "$AP_SRC" ]; then
-          echo "❌ ArgumentParser 源码目录不存在"
+        if [ ! -d "$AP_ROOT/ArgumentParser" ] || [ ! -d "$AP_ROOT/ArgumentParserToolInfo" ]; then
+          echo "❌ ArgumentParser 源码目录结构不符"
+          ls -la "$AP_ROOT"
           exit 1
         fi
 
-        cd "$AP_SRC"
-
-        SWIFT_FILES=()
-        while IFS= read -r -d '' file; do
-          SWIFT_FILES+=("$file")
-        done < <(find . -name "*.swift" -print0)
-
-        echo "找到 ${#SWIFT_FILES[@]} 个 .swift 文件"
+        echo "═══ 1/2 编译 ArgumentParserToolInfo ═══"
+        cd "$AP_ROOT/ArgumentParserToolInfo"
+        TOOLINFO_FILES=()
+        while IFS= read -r -d '' f; do TOOLINFO_FILES+=("$f"); done < <(find . -name "*.swift" -print0)
+        echo "  ${#TOOLINFO_FILES[@]} 个源文件"
 
         xcrun --sdk iphoneos swiftc \
-          -target arm64-apple-ios14.0 \
-          -sdk "$SDKROOT" \
+          -target arm64-apple-ios14.0 -sdk "$SDKROOT" \
+          -emit-module -emit-library -static \
+          -module-name ArgumentParserToolInfo \
+          -swift-version 5 -O \
+          "${TOOLINFO_FILES[@]}" \
+          -emit-module-path "$AP_DIR_ABS/ArgumentParserToolInfo.swiftmodule" \
+          -o "$AP_DIR_ABS/libArgumentParserToolInfo.a"
+
+        echo "═══ 2/2 编译 ArgumentParser ═══"
+        cd "$AP_ROOT/ArgumentParser"
+        SWIFT_FILES=()
+        while IFS= read -r -d '' f; do SWIFT_FILES+=("$f"); done < <(find . -name "*.swift" -print0)
+        echo "  ${#SWIFT_FILES[@]} 个源文件"
+
+        xcrun --sdk iphoneos swiftc \
+          -target arm64-apple-ios14.0 -sdk "$SDKROOT" \
           -emit-module -emit-library -static \
           -module-name ArgumentParser \
           -swift-version 5 -O \
+          -I "$AP_DIR_ABS" \
           "${SWIFT_FILES[@]}" \
           -emit-module-path "$AP_DIR_ABS/ArgumentParser.swiftmodule" \
           -o "$AP_DIR_ABS/libArgumentParser.a"
