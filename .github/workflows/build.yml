@@ -35,13 +35,13 @@ jobs:
         cd ${{ env.SOURCE_DIR }}
         curl -L -o ap.tar.gz https://github.com/apple/swift-argument-parser/archive/refs/tags/1.0.3.tar.gz
         tar -xzf ap.tar.gz
-        ls -la swift-argument-parser-1.0.3/Sources/
 
     - name: Build ArgumentParser for iOS
       run: |
         cd ${{ env.SOURCE_DIR }}
-        mkdir -p ap-build
-        AP_DIR_ABS="$PWD/ap-build"
+        # ★ 输出到 Makefile 期望的位置
+        mkdir -p build/ArgumentParser
+        AP_DIR_ABS="$PWD/build/ArgumentParser"
         AP_ROOT="$PWD/swift-argument-parser-1.0.3/Sources"
 
         if [ ! -d "$AP_ROOT/ArgumentParser" ] || [ ! -d "$AP_ROOT/ArgumentParserToolInfo" ]; then
@@ -89,8 +89,8 @@ jobs:
     - name: Build IPA
       run: |
         cd ${{ env.SOURCE_DIR }}
-        ls -la ap-build/ || { echo "❌ ap-build 缺失"; exit 1; }
-        make clean || true
+        # ★ 这里不再 make clean，因为会删掉 build/ArgumentParser
+        ls -la build/ArgumentParser/ || { echo "❌ ArgumentParser 缺失"; exit 1; }
         make ipa
       env:
         SDKROOT: ${{ github.workspace }}/sdk
