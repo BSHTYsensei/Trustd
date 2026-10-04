@@ -1,2 +1,2 @@
 # Trustd
-iOS is
+iOS is a very security system but it meet a God
