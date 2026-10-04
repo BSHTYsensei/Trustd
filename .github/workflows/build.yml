@@ -21,56 +21,48 @@ jobs:
 
     - name: Download and Setup iOS 16.5 SDK
       run: |
-        # 下载指定的 SDK
         curl -L -o iPhoneOS16.5.sdk.tar.xz https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
-        # 解压 SDK (macOS 自带 tar 支持 xz)
         tar -xf iPhoneOS16.5.sdk.tar.xz
-        # 将 SDK 移动到工作目录并重命名（去掉 .tar.xz 后的目录）
         mv iPhoneOS16.5.sdk ${{ github.workspace }}/sdk
-        # 设置环境变量，供 Makefile 使用
         echo "SDKROOT=${{ github.workspace }}/sdk" >> $GITHUB_ENV
         echo "THEOS_SDK_PATH=${{ github.workspace }}/sdk" >> $GITHUB_ENV
 
     - name: Extract Source Zip
       run: |
-        # 解压 Santander-main.zip 到 source 目录
         mkdir -p source
         unzip -q Santander-main.zip -d source
-        # 找到解压后的顶层目录（通常是 Santander-main）
-        SOURCE_DIR=$(find source -maxdepth 1 -type d | tail -n 1)
+        # 【关键修复】删除 macOS 压缩包自带的元数据文件夹，防止 make 找不到目标
+        rm -rf source/__MACOSX
+        # 找到真正的源码目录
+        SOURCE_DIR=$(find source -maxdepth 1 -type d -not -name "__MACOSX" | tail -n 1)
         echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
         echo "解压完成，源码位于: $SOURCE_DIR"
+        # 打印目录内容，方便调试
+        ls -la $SOURCE_DIR
 
     - name: Build with Makefile
       run: |
         cd ${{ env.SOURCE_DIR }}
         # 【重要】请根据你的 Makefile 实际的目标修改下方命令
-        # 常见的目标有: make clean && make package, make all, make do 等
+        # 如果你的 Makefile 只有 make all，请把 make package 改成 make all
         make clean || true
         make package
       env:
-        # 如果 Makefile 使用 Theos，请确保 THEOS 变量指向正确的 Theos 安装位置
-        # 若没有 Theos，可忽略
-        # THEOS: /opt/theos
         SDKROOT: ${{ github.workspace }}/sdk
 
     - name: Find .app and Package to IPA
       run: |
-        # 在源码目录及其子目录中查找编译生成的 .app
         APP_PATH=$(find ${{ env.SOURCE_DIR }} -name "*.app" -type d | head -n 1)
         
         if [ -z "$APP_PATH" ]; then
-          # 如果没有找到 .app，尝试直接找 .ipa（若 Makefile 直接生成了 ipa）
           IPA_PATH=$(find ${{ env.SOURCE_DIR }} -name "*.ipa" | head -n 1)
           if [ -n "$IPA_PATH" ]; then
             cp "$IPA_PATH" ./Santander.ipa
           else
             echo "错误：未找到编译产物 (.app 或 .ipa)"
-            echo "请检查 Makefile 的输出路径，或在此步骤前添加 ls -R 查看目录结构"
             exit 1
           fi
         else
-          # 找到 .app，手动打包成 IPA
           echo "找到 .app: $APP_PATH"
           mkdir -p Payload
           cp -r "$APP_PATH" Payload/
