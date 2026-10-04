@@ -10,11 +10,9 @@ jobs:
     runs-on: macos-14
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-    - name: Setup Xcode
-      uses: maxim-lobanov/setup-xcode@v1
+    - uses: maxim-lobanov/setup-xcode@v1
       with:
         xcode-version: '15.4'
 
@@ -24,17 +22,37 @@ jobs:
         tar -xf iPhoneOS16.5.sdk.tar.xz
         mv iPhoneOS16.5.sdk ${{ github.workspace }}/sdk
         echo "SDKROOT=${{ github.workspace }}/sdk" >> $GITHUB_ENV
-        ls ${{ github.workspace }}/sdk | head
 
     - name: Extract source
       run: |
         mkdir -p source
         unzip -q Santander-main.zip -d source
         rm -rf source/__MACOSX
-        SOURCE_DIR=$(find source -maxdepth 1 -type d -not -name '__MACOSX' | tail -n 1)
-        echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
-        echo "源码目录: $SOURCE_DIR"
-        ls -la "$SOURCE_DIR"
+        echo "SOURCE_DIR=$(find source -maxdepth 1 -type d -not -name '__MACOSX' | tail -n 1)" >> $GITHUB_ENV
+
+    - name: Clone ArgumentParser
+      run: |
+        cd ${{ env.SOURCE_DIR }}
+        git clone --depth 1 https://github.com/apple/swift-argument-parser.git swift-argument-parser
+
+    - name: Build ArgumentParser for iOS
+      run: |
+        cd ${{ env.SOURCE_DIR }}
+        mkdir -p build/ArgumentParser
+        AP_SOURCES=$(find swift-argument-parser/Sources/ArgumentParser -name "*.swift")
+        echo "找到 ArgumentParser 源文件 $(echo $AP_SOURCES | wc -w) 个"
+        xcrun --sdk iphoneos swiftc \
+          -target arm64-apple-ios14.0 \
+          -sdk $SDKROOT \
+          -emit-module -emit-library -static \
+          -module-name ArgumentParser \
+          -swift-version 5 -O \
+          $AP_SOURCES \
+          -emit-module-path build/ArgumentParser/ArgumentParser.swiftmodule \
+          -o build/ArgumentParser/libArgumentParser.a
+        ls -la build/ArgumentParser/
+      env:
+        SDKROOT: ${{ github.workspace }}/sdk
 
     - name: Build IPA
       run: |
