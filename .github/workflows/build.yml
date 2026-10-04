@@ -1,17 +1,16 @@
-name: Build Santander IPA (from zip)
+name: Build Santander IPA
 
 on:
   push:
     branches: [ "main", "master" ]
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build and Package IPA
     runs-on: macos-14
 
     steps:
-    - name: Checkout Repository
+    - name: Checkout
       uses: actions/checkout@v4
 
     - name: Setup Xcode
@@ -19,60 +18,35 @@ jobs:
       with:
         xcode-version: '15.4'
 
-    - name: Download and Setup iOS 16.5 SDK
+    - name: Download iOS 16.5 SDK
       run: |
         curl -L -o iPhoneOS16.5.sdk.tar.xz https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
         tar -xf iPhoneOS16.5.sdk.tar.xz
         mv iPhoneOS16.5.sdk ${{ github.workspace }}/sdk
         echo "SDKROOT=${{ github.workspace }}/sdk" >> $GITHUB_ENV
-        echo "THEOS_SDK_PATH=${{ github.workspace }}/sdk" >> $GITHUB_ENV
+        ls ${{ github.workspace }}/sdk | head
 
-    - name: Extract Source Zip
+    - name: Extract source
       run: |
         mkdir -p source
         unzip -q Santander-main.zip -d source
-        # 【关键修复】删除 macOS 压缩包自带的元数据文件夹，防止 make 找不到目标
         rm -rf source/__MACOSX
-        # 找到真正的源码目录
-        SOURCE_DIR=$(find source -maxdepth 1 -type d -not -name "__MACOSX" | tail -n 1)
+        SOURCE_DIR=$(find source -maxdepth 1 -type d -not -name '__MACOSX' | tail -n 1)
         echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
-        echo "解压完成，源码位于: $SOURCE_DIR"
-        # 打印目录内容，方便调试
-        ls -la $SOURCE_DIR
+        echo "源码目录: $SOURCE_DIR"
+        ls -la "$SOURCE_DIR"
 
-    - name: Build with Makefile
+    - name: Build IPA
       run: |
         cd ${{ env.SOURCE_DIR }}
-        # 【重要】请根据你的 Makefile 实际的目标修改下方命令
-        # 如果你的 Makefile 只有 make all，请把 make package 改成 make all
         make clean || true
-        make package
+        make ipa
       env:
         SDKROOT: ${{ github.workspace }}/sdk
-
-    - name: Find .app and Package to IPA
-      run: |
-        APP_PATH=$(find ${{ env.SOURCE_DIR }} -name "*.app" -type d | head -n 1)
-        
-        if [ -z "$APP_PATH" ]; then
-          IPA_PATH=$(find ${{ env.SOURCE_DIR }} -name "*.ipa" | head -n 1)
-          if [ -n "$IPA_PATH" ]; then
-            cp "$IPA_PATH" ./Santander.ipa
-          else
-            echo "错误：未找到编译产物 (.app 或 .ipa)"
-            exit 1
-          fi
-        else
-          echo "找到 .app: $APP_PATH"
-          mkdir -p Payload
-          cp -r "$APP_PATH" Payload/
-          zip -r Santander.ipa Payload
-        fi
-        echo "IPA 打包完成。"
 
     - name: Upload IPA
       uses: actions/upload-artifact@v4
       with:
         name: Santander-IPA
-        path: Santander.ipa
+        path: ${{ env.SOURCE_DIR }}/build/AppSantander.ipa
         retention-days: 7
