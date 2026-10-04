@@ -36,7 +36,7 @@ jobs:
         cd ${{ env.SOURCE_DIR }}
         curl -L -o ap.tar.gz https://github.com/apple/swift-argument-parser/archive/refs/tags/1.2.3.tar.gz
         tar -xzf ap.tar.gz
-        ls -la swift-argument-parser-1.2.3/Sources/ArgumentParser/ | head
+        ls -la swift-argument-parser-1.2.3/Sources/ArgumentParser/
 
     - name: Build ArgumentParser for iOS
       run: |
@@ -46,14 +46,18 @@ jobs:
         AP_SRC="$PWD/swift-argument-parser-1.2.3/Sources/ArgumentParser"
 
         if [ ! -d "$AP_SRC" ]; then
-          echo "❌ ArgumentParser 源码目录不存在: $AP_SRC"
-          ls -la swift-argument-parser-1.2.3/ || true
+          echo "❌ ArgumentParser 源码目录不存在"
           exit 1
         fi
 
         cd "$AP_SRC"
-        SWIFT_FILES=$(find . -name "*.swift")
-        echo "找到 $(echo "$SWIFT_FILES" | wc -l) 个 .swift 文件"
+
+        SWIFT_FILES=()
+        while IFS= read -r -d '' file; do
+          SWIFT_FILES+=("$file")
+        done < <(find . -name "*.swift" -print0)
+
+        echo "找到 ${#SWIFT_FILES[@]} 个 .swift 文件"
 
         xcrun --sdk iphoneos swiftc \
           -target arm64-apple-ios14.0 \
@@ -61,10 +65,11 @@ jobs:
           -emit-module -emit-library -static \
           -module-name ArgumentParser \
           -swift-version 5 -O \
-          $SWIFT_FILES \
+          "${SWIFT_FILES[@]}" \
           -emit-module-path "$AP_DIR_ABS/ArgumentParser.swiftmodule" \
           -o "$AP_DIR_ABS/libArgumentParser.a"
 
+        echo "✅ 编译产物:"
         ls -la "$AP_DIR_ABS/"
       env:
         SDKROOT: ${{ github.workspace }}/sdk
