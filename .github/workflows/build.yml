@@ -29,20 +29,31 @@ jobs:
         unzip -q Santander-main.zip -d source
         rm -rf source/__MACOSX
         echo "SOURCE_DIR=$(find source -maxdepth 1 -type d -not -name '__MACOSX' | tail -n 1)" >> $GITHUB_ENV
+        ls -la ${{ env.SOURCE_DIR }}
 
-    - name: Clone ArgumentParser
+    - name: Download ArgumentParser 1.2.3
       run: |
         cd ${{ env.SOURCE_DIR }}
-        git clone --depth 1 https://github.com/apple/swift-argument-parser.git swift-argument-parser
+        curl -L -o ap.tar.gz https://github.com/apple/swift-argument-parser/archive/refs/tags/1.2.3.tar.gz
+        tar -xzf ap.tar.gz
+        ls -la swift-argument-parser-1.2.3/Sources/ArgumentParser/ | head
 
     - name: Build ArgumentParser for iOS
       run: |
         cd ${{ env.SOURCE_DIR }}
         mkdir -p ap-build
         AP_DIR_ABS="$PWD/ap-build"
+        AP_SRC="$PWD/swift-argument-parser-1.2.3/Sources/ArgumentParser"
 
-        cd swift-argument-parser/Sources/ArgumentParser
-        echo "ArgumentParser 源文件数量: $(find . -name '*.swift' | wc -l)"
+        if [ ! -d "$AP_SRC" ]; then
+          echo "❌ ArgumentParser 源码目录不存在: $AP_SRC"
+          ls -la swift-argument-parser-1.2.3/ || true
+          exit 1
+        fi
+
+        cd "$AP_SRC"
+        SWIFT_FILES=$(find . -name "*.swift")
+        echo "找到 $(echo "$SWIFT_FILES" | wc -l) 个 .swift 文件"
 
         xcrun --sdk iphoneos swiftc \
           -target arm64-apple-ios14.0 \
@@ -50,11 +61,10 @@ jobs:
           -emit-module -emit-library -static \
           -module-name ArgumentParser \
           -swift-version 5 -O \
-          $(find . -name "*.swift") \
+          $SWIFT_FILES \
           -emit-module-path "$AP_DIR_ABS/ArgumentParser.swiftmodule" \
           -o "$AP_DIR_ABS/libArgumentParser.a"
 
-        echo "编译产物:"
         ls -la "$AP_DIR_ABS/"
       env:
         SDKROOT: ${{ github.workspace }}/sdk
@@ -62,6 +72,7 @@ jobs:
     - name: Build IPA
       run: |
         cd ${{ env.SOURCE_DIR }}
+        ls -la ap-build/ || { echo "❌ ap-build 缺失"; exit 1; }
         make clean || true
         make ipa
       env:
