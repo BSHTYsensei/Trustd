@@ -88,16 +88,38 @@ jobs:
 
     - name: Build IPA
       run: |
-        cd ${{ env.SOURCE_DIR }}
+        cd "${{ env.SOURCE_DIR }}"
         # ★ 这里不再 make clean，因为会删掉 build/ArgumentParser
         ls -la build/ArgumentParser/ || { echo "❌ ArgumentParser 缺失"; exit 1; }
-        make ipa
+        mkdir -p logs
+        set -o pipefail
+        make ipa 2>&1 | tee "logs/Santander-build-$(date +%Y%m%d-%H%M%S).log"
       env:
         SDKROOT: ${{ github.workspace }}/sdk
 
+    - name: Automatic CI smoke tests
+      run: |
+        cd "${{ env.SOURCE_DIR }}"
+        mkdir -p logs
+        make test TEST_BACKEND=ci
+      env:
+        SDKROOT: ${{ github.workspace }}/sdk
+        TEST_BACKEND: ci
+
+    - name: Upload test logs and reports
+      if: ${{ always() && env.SOURCE_DIR != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: Santander-test-logs
+        path: ${{ env.SOURCE_DIR }}/logs/
+        if-no-files-found: warn
+        retention-days: 14
+
     - name: Upload IPA
+      if: ${{ always() && env.SOURCE_DIR != '' }}
       uses: actions/upload-artifact@v4
       with:
         name: Santander-IPA
         path: ${{ env.SOURCE_DIR }}/build/AppSantander.ipa
+        if-no-files-found: warn
         retention-days: 7
