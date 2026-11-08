@@ -2,124 +2,213 @@ name: Build Santander IPA
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: santander-ipa-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: macos-15
+    timeout-minutes: 120
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - uses: maxim-lobanov/setup-xcode@v1
-      with:
-        xcode-version: '16.4'
+      - name: Select Xcode 15.4
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "15.4"
 
-    - name: Download iOS 16.5 SDK
-      run: |
-        curl -L -o iPhoneOS16.5.sdk.tar.xz https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
-        tar -xf iPhoneOS16.5.sdk.tar.xz
-        mv iPhoneOS16.5.sdk ${{ github.workspace }}/sdk
-        echo "SDKROOT=${{ github.workspace }}/sdk" >> $GITHUB_ENV
+      - name: Download iOS 16.5 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_URL="https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz"
+          curl -fL --retry 3 --retry-delay 2 "$SDK_URL" -o iPhoneOS16.5.sdk.tar.xz
+          tar -xJf iPhoneOS16.5.sdk.tar.xz
+          test -d iPhoneOS16.5.sdk
+          rm -rf "${GITHUB_WORKSPACE}/sdk"
+          mv iPhoneOS16.5.sdk "${GITHUB_WORKSPACE}/sdk"
+          test -d "${GITHUB_WORKSPACE}/sdk/System/Library/Frameworks"
+          echo "SDKROOT=${GITHUB_WORKSPACE}/sdk" >> "$GITHUB_ENV"
 
-    - name: Extract source
-      run: |
-        mkdir -p source
-        unzip -q Santander-main.zip -d source
-        rm -rf source/__MACOSX
-        echo "SOURCE_DIR=$(find source -maxdepth 1 -type d -not -name '__MACOSX' | tail -n 1)" >> $GITHUB_ENV
+      - name: Extract Santander source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p source
+          unzip -q Santander-main.zip -d source
+          rm -rf source/__MACOSX
 
-    - name: Download ArgumentParser 1.0.3
-      run: |
-        cd ${{ env.SOURCE_DIR }}
-        curl -L -o ap.tar.gz https://github.com/apple/swift-argument-parser/archive/refs/tags/1.0.3.tar.gz
-        tar -xzf ap.tar.gz
+          SOURCE_DIR="$(find source -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          if [[ -z "$SOURCE_DIR" || ! -f "$SOURCE_DIR/Makefile" ]]; then
+            echo "::error::Could not locate Santander source directory containing Makefile."
+            find source -maxdepth 3 -print
+            exit 1
+          fi
 
-    - name: Build ArgumentParser for iOS
-      run: |
-        cd ${{ env.SOURCE_DIR }}
-        # ★ 输出到 Makefile 期望的位置
-        mkdir -p build/ArgumentParser
-        AP_DIR_ABS="$PWD/build/ArgumentParser"
-        AP_ROOT="$PWD/swift-argument-parser-1.0.3/Sources"
+          echo "SOURCE_DIR=${GITHUB_WORKSPACE}/${SOURCE_DIR}" >> "$GITHUB_ENV"
+          echo "Using source directory: $SOURCE_DIR"
 
-        if [ ! -d "$AP_ROOT/ArgumentParser" ] || [ ! -d "$AP_ROOT/ArgumentParserToolInfo" ]; then
-          echo "❌ ArgumentParser 源码目录结构不符"
-          ls -la "$AP_ROOT"
-          exit 1
-        fi
+      - name: Download ArgumentParser 1.0.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+          curl -fL --retry 3 \
+            https://github.com/apple/swift-argument-parser/archive/refs/tags/1.0.3.tar.gz \
+            -o ap.tar.gz
+          tar -xzf ap.tar.gz
+          test -d swift-argument-parser-1.0.3/Sources/ArgumentParser
+          test -d swift-argument-parser-1.0.3/Sources/ArgumentParserToolInfo
 
-        echo "═══ 1/2 编译 ArgumentParserToolInfo ═══"
-        cd "$AP_ROOT/ArgumentParserToolInfo"
-        TOOLINFO_FILES=()
-        while IFS= read -r -d '' f; do TOOLINFO_FILES+=("$f"); done < <(find . -name "*.swift" -print0)
-        echo "  ${#TOOLINFO_FILES[@]} 个源文件"
+      - name: Build ArgumentParser for iOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
 
-        xcrun --sdk iphoneos swiftc \
-          -target arm64-apple-ios14.0 -sdk "$SDKROOT" \
-          -emit-module -emit-library -static \
-          -module-name ArgumentParserToolInfo \
-          -swift-version 5 -O \
-          "${TOOLINFO_FILES[@]}" \
-          -emit-module-path "$AP_DIR_ABS/ArgumentParserToolInfo.swiftmodule" \
-          -o "$AP_DIR_ABS/libArgumentParserToolInfo.a"
+          AP_DIR_ABS="$PWD/build/ArgumentParser"
+          AP_ROOT="$PWD/swift-argument-parser-1.0.3/Sources"
+          mkdir -p "$AP_DIR_ABS"
 
-        echo "═══ 2/2 编译 ArgumentParser ═══"
-        cd "$AP_ROOT/ArgumentParser"
-        SWIFT_FILES=()
-        while IFS= read -r -d '' f; do SWIFT_FILES+=("$f"); done < <(find . -name "*.swift" -print0)
-        echo "  ${#SWIFT_FILES[@]} 个源文件"
+          TOOLINFO_FILES=()
+          while IFS= read -r -d '' file; do TOOLINFO_FILES+=("$file"); done < <(find "$AP_ROOT/ArgumentParserToolInfo" -type f -name '*.swift' -print0)
+          if [[ ${#TOOLINFO_FILES[@]} -eq 0 ]]; then
+            echo "::error::No ArgumentParserToolInfo Swift sources found."
+            exit 1
+          fi
 
-        xcrun --sdk iphoneos swiftc \
-          -target arm64-apple-ios14.0 -sdk "$SDKROOT" \
-          -emit-module -emit-library -static \
-          -module-name ArgumentParser \
-          -swift-version 5 -O \
-          -I "$AP_DIR_ABS" \
-          "${SWIFT_FILES[@]}" \
-          -emit-module-path "$AP_DIR_ABS/ArgumentParser.swiftmodule" \
-          -o "$AP_DIR_ABS/libArgumentParser.a"
+          echo "Building ArgumentParserToolInfo (${#TOOLINFO_FILES[@]} files)"
+          xcrun --sdk iphoneos swiftc \
+            -target arm64-apple-ios14.0 \
+            -sdk "$SDKROOT" \
+            -emit-module -emit-library -static \
+            -module-name ArgumentParserToolInfo \
+            -swift-version 5 -O \
+            "${TOOLINFO_FILES[@]}" \
+            -emit-module-path "$AP_DIR_ABS/ArgumentParserToolInfo.swiftmodule" \
+            -o "$AP_DIR_ABS/libArgumentParserToolInfo.a"
 
-        echo "✅ 编译产物:"
-        ls -la "$AP_DIR_ABS/"
-      env:
-        SDKROOT: ${{ github.workspace }}/sdk
+          ARGUMENTPARSER_FILES=()
+          while IFS= read -r -d '' file; do ARGUMENTPARSER_FILES+=("$file"); done < <(find "$AP_ROOT/ArgumentParser" -type f -name '*.swift' -print0)
+          if [[ ${#ARGUMENTPARSER_FILES[@]} -eq 0 ]]; then
+            echo "::error::No ArgumentParser Swift sources found."
+            exit 1
+          fi
 
-    - name: Build IPA
-      run: |
-        cd "${{ env.SOURCE_DIR }}"
-        # ★ 这里不再 make clean，因为会删掉 build/ArgumentParser
-        ls -la build/ArgumentParser/ || { echo "❌ ArgumentParser 缺失"; exit 1; }
-        mkdir -p logs
-        set -o pipefail
-        make ipa 2>&1 | tee "logs/Santander-build-$(date +%Y%m%d-%H%M%S).log"
-      env:
-        SDKROOT: ${{ github.workspace }}/sdk
+          echo "Building ArgumentParser (${#ARGUMENTPARSER_FILES[@]} files)"
+          xcrun --sdk iphoneos swiftc \
+            -target arm64-apple-ios14.0 \
+            -sdk "$SDKROOT" \
+            -emit-module -emit-library -static \
+            -module-name ArgumentParser \
+            -swift-version 5 -O \
+            -I "$AP_DIR_ABS" \
+            "${ARGUMENTPARSER_FILES[@]}" \
+            -emit-module-path "$AP_DIR_ABS/ArgumentParser.swiftmodule" \
+            -o "$AP_DIR_ABS/libArgumentParser.a"
 
-    - name: Automatic CI smoke tests
-      run: |
-        cd "${{ env.SOURCE_DIR }}"
-        mkdir -p logs
-        make test TEST_BACKEND=ci
-      env:
-        SDKROOT: ${{ github.workspace }}/sdk
-        TEST_BACKEND: ci
+          test -s "$AP_DIR_ABS/ArgumentParser.swiftmodule"
+          test -s "$AP_DIR_ABS/ArgumentParserToolInfo.swiftmodule"
+          test -s "$AP_DIR_ABS/libArgumentParser.a"
+          test -s "$AP_DIR_ABS/libArgumentParserToolInfo.a"
+          ls -lah "$AP_DIR_ABS"
 
-    - name: Upload test logs and reports
-      if: ${{ always() && env.SOURCE_DIR != '' }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: Santander-test-logs
-        path: ${{ env.SOURCE_DIR }}/logs/
-        if-no-files-found: warn
-        retention-days: 14
+      # Makefile clones this dependency automatically. Clone it here first so the
+      # compatibility patch is applied before Makefile starts compiling SwiftTerm.
+      - name: Prepare SwiftTerm 1.2.1 compatibility patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
 
-    - name: Upload IPA
-      if: ${{ always() && env.SOURCE_DIR != '' }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: Santander-IPA
-        path: ${{ env.SOURCE_DIR }}/build/AppSantander.ipa
-        if-no-files-found: warn
-        retention-days: 7
+          SWIFTTERM_DIR="vendor/SwiftTerm"
+          SWIFTTERM_FILE="$SWIFTTERM_DIR/Sources/SwiftTerm/iOS/iOSTerminalView.swift"
+          SWIFTTERM_MARKER="$SWIFTTERM_DIR/.santander-cloned"
+
+          rm -rf "$SWIFTTERM_DIR"
+          mkdir -p vendor
+          git clone --depth 1 --single-branch --branch 1.2.1 \
+            https://github.com/migueldeicaza/SwiftTerm.git "$SWIFTTERM_DIR"
+
+          test -f "$SWIFTTERM_FILE"
+          python3 - "$SWIFTTERM_FILE" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+          old = "internal var log: Logger = Logger(subsystem: \"org.tirania.SwiftTerm\", category: \"msg\")"
+          new = "internal let log: Logger = Logger(subsystem: \"org.tirania.SwiftTerm\", category: \"msg\")"
+
+          if old in source:
+              source = source.replace(old, new, 1)
+              path.write_text(source, encoding="utf-8")
+              print("Patched SwiftTerm Logger declaration: var -> let")
+          elif new in source:
+              print("SwiftTerm Logger declaration is already patched")
+          else:
+              raise SystemExit(
+                  "Expected SwiftTerm 1.2.1 Logger declaration was not found; "
+                  "refusing to continue with an unverified patch."
+              )
+          PY
+
+          grep -F 'internal let log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")' "$SWIFTTERM_FILE"
+
+          # The Santander Makefile uses this marker to skip its own clone step.
+          touch "$SWIFTTERM_MARKER"
+          git -C "$SWIFTTERM_DIR" rev-parse --short HEAD
+
+      - name: Build IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+
+          test -s build/ArgumentParser/ArgumentParser.swiftmodule
+          test -s build/ArgumentParser/ArgumentParserToolInfo.swiftmodule
+          test -s build/ArgumentParser/libArgumentParser.a
+          test -s build/ArgumentParser/libArgumentParserToolInfo.a
+          test -f vendor/SwiftTerm/.santander-cloned
+
+          mkdir -p logs
+          BUILD_LOG="logs/Santander-build-$(date +%Y%m%d-%H%M%S).log"
+          set -o pipefail
+          make ipa 2>&1 | tee "$BUILD_LOG"
+
+          test -s build/AppSantander.ipa
+          echo "IPA built: ${SOURCE_DIR}/build/AppSantander.ipa"
+
+      - name: Automatic CI smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+          make test TEST_BACKEND=ci
+
+      - name: Upload test logs and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Santander-test-logs
+          path: source/Santander-main/logs/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload IPA
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Santander-IPA
+          path: source/Santander-main/build/AppSantander.ipa
+          if-no-files-found: error
+          retention-days: 7
