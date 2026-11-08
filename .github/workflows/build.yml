@@ -21,10 +21,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Select Xcode 15.4
+      - name: Select Xcode 16.4
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: "15.4"
+          xcode-version: "16.4"
 
       - name: Download iOS 16.5 SDK
         shell: bash
