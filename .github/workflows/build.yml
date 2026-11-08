@@ -26,6 +26,19 @@ jobs:
         with:
           xcode-version: "16.4"
 
+      - name: Verify selected Xcode toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          ACTUAL_XCODE="$(xcodebuild -version | awk '/^Xcode / { print $2; exit }')"
+          if [[ "$ACTUAL_XCODE" != "16.4" ]]; then
+            echo "::error::Expected Xcode 16.4, but selected $ACTUAL_XCODE"
+            exit 1
+          fi
+          swift --version
+          xcrun --sdk iphoneos --show-sdk-version
+
       - name: Download iOS 16.5 SDK
         shell: bash
         run: |
@@ -123,7 +136,7 @@ jobs:
           ls -lah "$AP_DIR_ABS"
 
       # Makefile clones this dependency automatically. Clone it here first so the
-      # compatibility patch is applied before Makefile starts compiling SwiftTerm.
+      # Xcode 16.4 compatibility import is applied before SwiftTerm is compiled.
       - name: Prepare SwiftTerm 1.2.1 compatibility patch
         shell: bash
         run: |
@@ -131,7 +144,8 @@ jobs:
           cd "$SOURCE_DIR"
 
           SWIFTTERM_DIR="vendor/SwiftTerm"
-          SWIFTTERM_FILE="$SWIFTTERM_DIR/Sources/SwiftTerm/iOS/iOSTerminalView.swift"
+          TERMINAL_VIEW="$SWIFTTERM_DIR/Sources/SwiftTerm/iOS/iOSTerminalView.swift"
+          TEXT_INPUT="$SWIFTTERM_DIR/Sources/SwiftTerm/iOS/iOSTextInput.swift"
           SWIFTTERM_MARKER="$SWIFTTERM_DIR/.santander-cloned"
 
           rm -rf "$SWIFTTERM_DIR"
@@ -139,30 +153,54 @@ jobs:
           git clone --depth 1 --single-branch --branch 1.2.1 \
             https://github.com/migueldeicaza/SwiftTerm.git "$SWIFTTERM_DIR"
 
-          test -f "$SWIFTTERM_FILE"
-          python3 - "$SWIFTTERM_FILE" <<'PY'
+          test -f "$TERMINAL_VIEW"
+          test -f "$TEXT_INPUT"
+
+          python3 - "$TERMINAL_VIEW" "$TEXT_INPUT" <<'PYTHON'
           from pathlib import Path
           import sys
 
-          path = Path(sys.argv[1])
-          source = path.read_text(encoding="utf-8")
-          old = "internal var log: Logger = Logger(subsystem: \"org.tirania.SwiftTerm\", category: \"msg\")"
-          new = "internal let log: Logger = Logger(subsystem: \"org.tirania.SwiftTerm\", category: \"msg\")"
+          terminal_view = Path(sys.argv[1])
+          text_input = Path(sys.argv[2])
 
-          if old in source:
-              source = source.replace(old, new, 1)
-              path.write_text(source, encoding="utf-8")
-              print("Patched SwiftTerm Logger declaration: var -> let")
-          elif new in source:
-              print("SwiftTerm Logger declaration is already patched")
+          # This declaration is immutable in current SwiftTerm. Keep that property
+          # when patching the 1.2.1 source, but it is not the interpolation fix.
+          view_source = terminal_view.read_text(encoding="utf-8")
+          old_decl = 'internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")'
+          new_decl = 'internal let log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")'
+          if old_decl in view_source:
+              view_source = view_source.replace(old_decl, new_decl, 1)
+              terminal_view.write_text(view_source, encoding="utf-8")
+              print("Updated SwiftTerm logger storage to immutable let")
+          elif new_decl not in view_source:
+              raise SystemExit("Could not find the expected SwiftTerm 1.2.1 Logger declaration")
+
+          # OSLog's interpolation support must be imported in the source file that
+          # calls Logger.critical. Importing os only in iOSTerminalView.swift is not
+          # sufficient because Swift imports are file-scoped.
+          source = text_input.read_text(encoding="utf-8")
+          if "import os" not in source.split("#if os(iOS)", 1)[-1].split("#endif", 1)[0]:
+              anchor = "import CoreGraphics\n"
+              if anchor not in source:
+                  raise SystemExit("Could not find CoreGraphics import in iOSTextInput.swift")
+              source = source.replace(anchor, anchor + "import os\n", 1)
+              text_input.write_text(source, encoding="utf-8")
+              print("Added file-scoped import os to iOSTextInput.swift")
           else:
-              raise SystemExit(
-                  "Expected SwiftTerm 1.2.1 Logger declaration was not found; "
-                  "refusing to continue with an unverified patch."
-              )
-          PY
+              print("iOSTextInput.swift already imports os")
 
-          grep -F 'internal let log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")' "$SWIFTTERM_FILE"
+          patched = text_input.read_text(encoding="utf-8")
+          critical_calls = patched.count("log.critical(")
+          if critical_calls != 3:
+              raise SystemExit(f"Expected 3 SwiftTerm critical log calls, found {critical_calls}")
+          ios_block = patched.split("#if os(iOS)", 1)[-1].split("#endif", 1)[0]
+          if "import os" not in ios_block:
+              raise SystemExit("import os validation failed")
+          print(f"Validated {critical_calls} Logger.critical calls with os imported")
+          PYTHON
+
+          grep -n '^import os$' "$TEXT_INPUT"
+          grep -n 'log\.critical' "$TEXT_INPUT"
 
           # The Santander Makefile uses this marker to skip its own clone step.
           touch "$SWIFTTERM_MARKER"
