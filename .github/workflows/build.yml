@@ -135,16 +135,15 @@ jobs:
           test -s "$AP_DIR_ABS/libArgumentParserToolInfo.a"
           ls -lah "$AP_DIR_ABS"
 
-      # Makefile clones this dependency automatically. Clone it here first so the
-      # Xcode 16.4 compatibility import is applied before SwiftTerm is compiled.
-      - name: Prepare SwiftTerm 1.2.1 compatibility patch
+      # Makefile normally clones SwiftTerm 1.2.1. Clone and patch it here first,
+      # then create the marker Makefile checks so it does not replace the patched source.
+      - name: Prepare SwiftTerm 1.2.1 Xcode 16.4 compatibility patch
         shell: bash
         run: |
           set -euo pipefail
           cd "$SOURCE_DIR"
 
           SWIFTTERM_DIR="vendor/SwiftTerm"
-          TERMINAL_VIEW="$SWIFTTERM_DIR/Sources/SwiftTerm/iOS/iOSTerminalView.swift"
           TEXT_INPUT="$SWIFTTERM_DIR/Sources/SwiftTerm/iOS/iOSTextInput.swift"
           SWIFTTERM_MARKER="$SWIFTTERM_DIR/.santander-cloned"
 
@@ -153,57 +152,59 @@ jobs:
           git clone --depth 1 --single-branch --branch 1.2.1 \
             https://github.com/migueldeicaza/SwiftTerm.git "$SWIFTTERM_DIR"
 
-          test -f "$TERMINAL_VIEW"
           test -f "$TEXT_INPUT"
 
-          python3 - "$TERMINAL_VIEW" "$TEXT_INPUT" <<'PYTHON'
+          # Logger.critical(_:) uses OSLogMessage's compiler-special interpolation.
+          # This SDK/toolchain combination rejects those calls from this source file.
+          # NSLog accepts a normal Foundation String, preserving the diagnostic text
+          # without invoking the OSLog interpolation type-checking path.
+          python3 - "$TEXT_INPUT" <<'PYTHON'
           from pathlib import Path
           import sys
 
-          terminal_view = Path(sys.argv[1])
-          text_input = Path(sys.argv[2])
+          path = Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
 
-          # This declaration is immutable in current SwiftTerm. Keep that property
-          # when patching the 1.2.1 source, but it is not the interpolation fix.
-          view_source = terminal_view.read_text(encoding="utf-8")
-          old_decl = 'internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")'
-          new_decl = 'internal let log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")'
-          if old_decl in view_source:
-              view_source = view_source.replace(old_decl, new_decl, 1)
-              terminal_view.write_text(view_source, encoding="utf-8")
-              print("Updated SwiftTerm logger storage to immutable let")
-          elif new_decl not in view_source:
-              raise SystemExit("Could not find the expected SwiftTerm 1.2.1 Logger declaration")
+          replacements = {
+              r'log.critical("Attempt to access [\(r._start)..<\(r.end) on a string with \(self.textInputStorage.count)")':
+              r'NSLog("Attempt to access [\(r._start)..<\(r.end) on a string with \(self.textInputStorage.count)")',
+              r'log.critical("xTextPosition created with start=\(start), resetting to 0")':
+              r'NSLog("xTextPosition created with start=\(start), resetting to 0")',
+              r'log.critical("xTextRange created with end=\(end) < start=\(start), resetting")':
+              r'NSLog("xTextRange created with end=\(end) < start=\(start), resetting")',
+          }
 
-          # OSLog's interpolation support must be imported in the source file that
-          # calls Logger.critical. Importing os only in iOSTerminalView.swift is not
-          # sufficient because Swift imports are file-scoped.
-          source = text_input.read_text(encoding="utf-8")
-          if "import os" not in source.split("#if os(iOS)", 1)[-1].split("#endif", 1)[0]:
-              anchor = "import CoreGraphics\n"
-              if anchor not in source:
-                  raise SystemExit("Could not find CoreGraphics import in iOSTextInput.swift")
-              source = source.replace(anchor, anchor + "import os\n", 1)
-              text_input.write_text(source, encoding="utf-8")
-              print("Added file-scoped import os to iOSTextInput.swift")
-          else:
-              print("iOSTextInput.swift already imports os")
+          for old, new in replacements.items():
+              if old in source:
+                  source = source.replace(old, new, 1)
+                  print(f"Patched: {old.split(chr(34))[1]}")
+              elif new in source:
+                  print(f"Already patched: {new.split(chr(34))[1]}")
+              else:
+                  raise SystemExit(f"Expected SwiftTerm 1.2.1 log statement not found: {old}")
 
-          patched = text_input.read_text(encoding="utf-8")
-          critical_calls = patched.count("log.critical(")
-          if critical_calls != 3:
-              raise SystemExit(f"Expected 3 SwiftTerm critical log calls, found {critical_calls}")
-          ios_block = patched.split("#if os(iOS)", 1)[-1].split("#endif", 1)[0]
-          if "import os" not in ios_block:
-              raise SystemExit("import os validation failed")
-          print(f"Validated {critical_calls} Logger.critical calls with os imported")
+          if "log.critical(" in source:
+              raise SystemExit("One or more Logger.critical calls remain in iOSTextInput.swift")
+          if source.count("NSLog(") < 3:
+              raise SystemExit("Expected all 3 diagnostic statements to use NSLog")
+
+          # The previous workflow trial added this unnecessary import. A clean clone
+          # should not need it after moving these messages to Foundation NSLog.
+          source = source.replace("import CoreGraphics\nimport os\n", "import CoreGraphics\n", 1)
+          path.write_text(source, encoding="utf-8")
+          print("Validated all 3 SwiftTerm diagnostics now use Foundation NSLog")
           PYTHON
 
-          grep -n '^import os$' "$TEXT_INPUT"
-          grep -n 'log\.critical' "$TEXT_INPUT"
+          echo "--- Patched SwiftTerm diagnostics ---"
+          grep -n 'NSLog(' "$TEXT_INPUT"
+          if grep -n 'log\.critical(' "$TEXT_INPUT"; then
+            echo "::error::SwiftTerm OSLog interpolation calls remain after patch"
+            exit 1
+          fi
 
-          # The Santander Makefile uses this marker to skip its own clone step.
+          # This marker is the Makefile's dependency target; do not omit it.
           touch "$SWIFTTERM_MARKER"
+          test -f "$SWIFTTERM_MARKER"
           git -C "$SWIFTTERM_DIR" rev-parse --short HEAD
 
       - name: Build IPA
