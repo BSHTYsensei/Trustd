@@ -77,9 +77,40 @@ jobs:
           set -euo pipefail
           brew update
           brew install ldid libarchive pkg-config
+
+          # libarchive is keg-only on Homebrew. Resolve its actual prefix
+          # instead of assuming that pkg-config can discover it globally.
+          LIBARCHIVE_PREFIX="$(brew --prefix libarchive)"
+          LIBARCHIVE_PC="$(find "$LIBARCHIVE_PREFIX" -name libarchive.pc -type f -print -quit)"
+          if [[ -z "$LIBARCHIVE_PC" ]]; then
+            echo "::error::libarchive.pc was not found under $LIBARCHIVE_PREFIX"
+            find "$LIBARCHIVE_PREFIX" -maxdepth 5 -type f | sort | head -200 || true
+            brew info libarchive || true
+            exit 1
+          fi
+
+          LIBARCHIVE_PC_DIR="$(dirname "$LIBARCHIVE_PC")"
+          BREW_PREFIX="$(brew --prefix)"
+          export PKG_CONFIG_PATH="$LIBARCHIVE_PC_DIR:$BREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          export CPPFLAGS="-I$LIBARCHIVE_PREFIX/include ${CPPFLAGS:-}"
+          export LDFLAGS="-L$LIBARCHIVE_PREFIX/lib ${LDFLAGS:-}"
+          export PATH="$LIBARCHIVE_PREFIX/bin:$PATH"
+
+          # Persist these values for make smoke and later build steps.
+          {
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+            echo "CPPFLAGS=$CPPFLAGS"
+            echo "LDFLAGS=$LDFLAGS"
+            echo "$LIBARCHIVE_PREFIX/bin"
+          } >> "$GITHUB_ENV"
+          echo "$LIBARCHIVE_PREFIX/bin" >> "$GITHUB_PATH"
+
           command -v ldid
           ldid -h >/dev/null 2>&1 || true
+          echo "libarchive prefix: $LIBARCHIVE_PREFIX"
+          echo "libarchive.pc: $LIBARCHIVE_PC"
           pkg-config --modversion libarchive
+          pkg-config --cflags --libs libarchive
 
       - name: Extract Hoshino.zip from repository root
         run: |
