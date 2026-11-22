@@ -136,17 +136,12 @@ jobs:
           test -d "$SOURCE_DIR/Hoshino.xcodeproj"
           test -f "$SOURCE_DIR/Hoshino/Entitlements/TrollStore.entitlements"
 
-      - name: Run host-side tests (root PTY and RPC coverage)
+      - name: Run host-side tests (root PTY, RPC and bridge coverage)
         working-directory: ${{ github.workspace }}/Hoshino-src
         shell: bash
         run: |
           set -euo pipefail
 
-          # RootHelper's PTY smoke test intentionally verifies the root shell
-          # path. A normal macOS runner user causes /usr/bin/su to prompt for
-          # an interactive password, which CI cannot provide. GitHub-hosted
-          # macOS runners grant passwordless sudo, so run the host suite as
-          # root and fail immediately rather than waiting for a password.
           restore_build_ownership() {
             if [[ -d build ]]; then
               sudo -n chown -R "$(id -u):$(id -g)" build || true
@@ -154,7 +149,47 @@ jobs:
           }
           trap restore_build_ownership EXIT
 
-          sudo -n -E make smoke
+          # Run the ordinary host checks as root so the PTY smoke test never
+          # falls through to an interactive `su` password prompt.
+          sudo -n -E make plist-test native-core-test archive-core-test script-runtime-test swift-parse project-test
+
+          mkdir -p build/host-smoke
+          sudo -n -E "${CXX:-clang++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+            -I Hoshino/Core RootHelper/main.cpp Hoshino/Core/NativeCore.cpp \
+            -o build/host-smoke/RootHelper
+
+          sudo -n -E python3 Tests/RootHelperPTYSmoke.py build/host-smoke/RootHelper
+          sudo -n -E python3 Tests/RootHelperRPCTest.py build/host-smoke/RootHelper
+          sudo -n -E python3 Tests/RootHelperServerProtocol.py build/host-smoke/RootHelper
+
+          # RootProcessBridge uses iOS-private persona APIs when those weak
+          # symbols are available. On a macOS CI host those APIs are not the
+          # behavior under test: we need the spawned helper to inherit the
+          # runner's already-elevated euid. Compile a temporary host-only copy
+          # with persona override disabled for the persistent-service test.
+          # The checked-in production source is never modified and the iOS
+          # app build below compiles the original RootProcessBridge.mm.
+          HOST_BRIDGE_SOURCE="$RUNNER_TEMP/RootProcessBridge.host.mm"
+          python3 - "$GITHUB_WORKSPACE/Hoshino-src/Hoshino/Core/RootProcessBridge.mm" "$HOST_BRIDGE_SOURCE" <<'PYCODE'
+          from pathlib import Path
+          import sys
+
+          source = Path(sys.argv[1]).read_text()
+          needle = "if (posix_spawnattr_set_persona_np && posix_spawnattr_set_persona_uid_np && posix_spawnattr_set_persona_gid_np) {"
+          if source.count(needle) != 1:
+              raise SystemExit("Could not uniquely locate the persistent-service persona block")
+          source = source.replace(needle, "if (false && " + needle[len("if ("):], 1)
+          Path(sys.argv[2]).write_text(source)
+          PYCODE
+
+          sudo -n -E "${CXX:-clang++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+            -x c++ -I Hoshino/Core -c "$HOST_BRIDGE_SOURCE" \
+            -o build/host-smoke/RootProcessBridge.host.o
+          sudo -n -E "${CXX:-clang++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+            -I Hoshino/Core Tests/RootProcessBridgeServerSmoke.cpp \
+            build/host-smoke/RootProcessBridge.host.o \
+            -o build/host-smoke/RootProcessBridgeServerSmoke
+          sudo -n -E build/host-smoke/RootProcessBridgeServerSmoke build/host-smoke/RootHelper
 
       - name: Verify Xcode resolves the exact iOS 16.5 SDK
         working-directory: ${{ github.workspace }}/Hoshino-src
