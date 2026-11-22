@@ -27,6 +27,7 @@ jobs:
     env:
       THEOS: ${{ github.workspace }}/theos
       IOS_SDK_PATH: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
+      IOS_SDK_NAME: iphoneos16.5
       SOURCE_DIR: ${{ github.workspace }}/Hoshino-src
       IPA_NAME: Hoshino-iOS16.5
 
@@ -70,7 +71,30 @@ jobs:
           test -f "$IOS_SDK_PATH/SDKSettings.plist"
           test -d "$IOS_SDK_PATH/System/Library/Frameworks"
           plutil -lint "$IOS_SDK_PATH/SDKSettings.plist"
-          echo "Using SDK: $IOS_SDK_PATH"
+
+          # xcodebuild does not reliably resolve an SDK stored at an arbitrary
+          # workspace path. Register the patched Theos SDK under the selected
+          # Xcode iPhoneOS platform, then select it by its canonical SDK name.
+          XCODE_SDKS_DIR="$(xcode-select -p)/Platforms/iPhoneOS.platform/Developer/SDKs"
+          XCODE_SDK_LINK="$XCODE_SDKS_DIR/iPhoneOS16.5.sdk"
+          test -d "$XCODE_SDKS_DIR"
+          if [[ -e "$XCODE_SDK_LINK" && ! -L "$XCODE_SDK_LINK" ]]; then
+            echo "::error::An unexpected non-symlink SDK already exists at $XCODE_SDK_LINK"
+            exit 1
+          fi
+          sudo ln -sfn "$IOS_SDK_PATH" "$XCODE_SDK_LINK"
+          xcodebuild -showsdks | grep -F "$IOS_SDK_NAME"
+
+          RESOLVED_SDK_PATH="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-path)"
+          RESOLVED_SDK_VERSION="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-version)"
+          if [[ "$RESOLVED_SDK_VERSION" != "16.5" ]]; then
+            echo "::error::Expected iOS SDK 16.5, got $RESOLVED_SDK_VERSION ($RESOLVED_SDK_PATH)"
+            exit 1
+          fi
+          test -f "$RESOLVED_SDK_PATH/SDKSettings.plist"
+          echo "IOS_SDK_PATH=$IOS_SDK_PATH" >> "$GITHUB_ENV"
+          echo "XCODE_SDK_PATH=$RESOLVED_SDK_PATH" >> "$GITHUB_ENV"
+          echo "Using patched Theos SDK: $RESOLVED_SDK_PATH (iOS $RESOLVED_SDK_VERSION)"
 
       - name: Install build dependencies
         shell: bash
@@ -195,13 +219,24 @@ jobs:
         working-directory: ${{ github.workspace }}/Hoshino-src
         run: |
           set -euo pipefail
+          RESOLVED_SDK_PATH="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-path)"
+          RESOLVED_SDK_VERSION="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-version)"
+          [[ "$RESOLVED_SDK_VERSION" == "16.5" ]]
+          [[ "$(cd "$RESOLVED_SDK_PATH" && pwd -P)" == "$(cd "$IOS_SDK_PATH" && pwd -P)" ]]
+
           BUILD_SETTINGS="$(xcodebuild \
             -project Hoshino.xcodeproj \
             -scheme Hoshino \
             -configuration Release \
-            -sdk "$IOS_SDK_PATH" \
+            -sdk "$IOS_SDK_NAME" \
             -showBuildSettings)"
-          printf '%s\n' "$BUILD_SETTINGS" | grep -F "SDKROOT = $IOS_SDK_PATH"
+          SDKROOT_LINE="$(printf '%s\n' "$BUILD_SETTINGS" | grep -m 1 'SDKROOT = ' || true)"
+          if [[ "$SDKROOT_LINE" != *"$IOS_SDK_NAME"* && "$SDKROOT_LINE" != *"iPhoneOS16.5.sdk"* ]]; then
+            echo "::error::xcodebuild did not select the iOS 16.5 SDK: $SDKROOT_LINE"
+            exit 1
+          fi
+          echo "Confirmed xcodebuild SDKROOT: $SDKROOT_LINE"
+          echo "Resolved SDK path: $RESOLVED_SDK_PATH (iOS $RESOLVED_SDK_VERSION)"
 
       - name: Build and package IPA with iOS 16.5 SDK
         working-directory: ${{ github.workspace }}/Hoshino-src
@@ -209,7 +244,7 @@ jobs:
           set -euo pipefail
           make clean
           make ipa \
-            SDK="$IOS_SDK_PATH" \
+            SDK="$IOS_SDK_NAME" \
             IPA_NAME="$IPA_NAME" \
             ENTITLEMENTS="Hoshino/Entitlements/TrollStore.entitlements"
 
