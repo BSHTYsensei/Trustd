@@ -1,253 +1,135 @@
-name: Build Santander IPA
+name: Hoshino iOS 16.5 Build
 
 on:
-  push:
-    branches: ["main", "master"]
   workflow_dispatch:
+  push:
+    paths:
+      - 'Hoshino.zip'
+      - '.github/workflows/build.yml'
+  pull_request:
+    paths:
+      - 'Hoshino.zip'
+      - '.github/workflows/build.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: santander-ipa-${{ github.ref }}
+  group: hoshino-ios165-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
+    name: Build TrollStore IPA (iOS 16.5 SDK)
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 60
+
+    env:
+      THEOS: ${{ github.workspace }}/theos
+      IOS_SDK_PATH: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
+      SOURCE_DIR: ${{ github.workspace }}/Hoshino-src
+      IPA_NAME: Hoshino-iOS16.5
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Select Xcode 16.4
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: "16.4"
-
-      - name: Verify selected Xcode toolchain
-        shell: bash
         run: |
           set -euo pipefail
+          XCODE_DEVELOPER_DIR="/Applications/Xcode_16.4.app/Contents/Developer"
+          if [[ ! -d "$XCODE_DEVELOPER_DIR" ]]; then
+            echo "::error::Xcode 16.4 was not found on this runner."
+            ls -1 /Applications | grep '^Xcode' || true
+            exit 1
+          fi
+          sudo xcode-select --switch "$XCODE_DEVELOPER_DIR"
           xcodebuild -version
-          ACTUAL_XCODE="$(xcodebuild -version | awk '/^Xcode / { print $2; exit }')"
-          if [[ "$ACTUAL_XCODE" != "16.4" ]]; then
-            echo "::error::Expected Xcode 16.4, but selected $ACTUAL_XCODE"
-            exit 1
-          fi
-          swift --version
-          xcrun --sdk iphoneos --show-sdk-version
+          xcodebuild -showsdks
 
-      - name: Download iOS 16.5 SDK
-        shell: bash
+      - name: Cache Theos iOS 16.5 SDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
+          key: theos-sdk-iPhoneOS16.5-master-146e41f-v1
+
+      - name: Install Theos iOS 16.5 SDK
         run: |
           set -euo pipefail
-          SDK_URL="https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz"
-          curl -fL --retry 3 --retry-delay 2 "$SDK_URL" -o iPhoneOS16.5.sdk.tar.xz
-          tar -xJf iPhoneOS16.5.sdk.tar.xz
-          test -d iPhoneOS16.5.sdk
-          rm -rf "${GITHUB_WORKSPACE}/sdk"
-          mv iPhoneOS16.5.sdk "${GITHUB_WORKSPACE}/sdk"
-          test -d "${GITHUB_WORKSPACE}/sdk/System/Library/Frameworks"
-          echo "SDKROOT=${GITHUB_WORKSPACE}/sdk" >> "$GITHUB_ENV"
+          mkdir -p "$THEOS/sdks"
 
-      - name: Extract Santander source
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p source
-          unzip -q Santander-main.zip -d source
-          rm -rf source/__MACOSX
-
-          SOURCE_DIR="$(find source -mindepth 1 -maxdepth 1 -type d -print -quit)"
-          if [[ -z "$SOURCE_DIR" || ! -f "$SOURCE_DIR/Makefile" ]]; then
-            echo "::error::Could not locate Santander source directory containing Makefile."
-            find source -maxdepth 3 -print
-            exit 1
+          if [[ ! -f "$IOS_SDK_PATH/SDKSettings.plist" ]]; then
+            SDK_ARCHIVE="$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz"
+            curl --fail --location --retry 5 --retry-all-errors \
+              "https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz" \
+              --output "$SDK_ARCHIVE"
+            tar -tJf "$SDK_ARCHIVE" >/dev/null
+            tar -xJf "$SDK_ARCHIVE" -C "$THEOS/sdks"
           fi
 
-          echo "SOURCE_DIR=${GITHUB_WORKSPACE}/${SOURCE_DIR}" >> "$GITHUB_ENV"
-          echo "Using source directory: $SOURCE_DIR"
+          test -f "$IOS_SDK_PATH/SDKSettings.plist"
+          test -d "$IOS_SDK_PATH/System/Library/Frameworks"
+          plutil -lint "$IOS_SDK_PATH/SDKSettings.plist"
+          echo "Using SDK: $IOS_SDK_PATH"
 
-      - name: Download ArgumentParser 1.0.3
-        shell: bash
+      - name: Install build dependencies
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR"
-          curl -fL --retry 3 \
-            https://github.com/apple/swift-argument-parser/archive/refs/tags/1.0.3.tar.gz \
-            -o ap.tar.gz
-          tar -xzf ap.tar.gz
-          test -d swift-argument-parser-1.0.3/Sources/ArgumentParser
-          test -d swift-argument-parser-1.0.3/Sources/ArgumentParserToolInfo
+          brew update
+          brew install ldid libarchive pkg-config
+          command -v ldid
+          ldid -h >/dev/null 2>&1 || true
+          pkg-config --modversion libarchive
 
-      - name: Build ArgumentParser for iOS
-        shell: bash
+      - name: Extract Hoshino.zip from repository root
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR"
+          test -f "$GITHUB_WORKSPACE/Hoshino.zip"
+          rm -rf "$SOURCE_DIR"
+          mkdir -p "$SOURCE_DIR"
+          unzip -q "$GITHUB_WORKSPACE/Hoshino.zip" -d "$SOURCE_DIR"
+          test -f "$SOURCE_DIR/Makefile"
+          test -d "$SOURCE_DIR/Hoshino.xcodeproj"
+          test -f "$SOURCE_DIR/Hoshino/Entitlements/TrollStore.entitlements"
 
-          AP_DIR_ABS="$PWD/build/ArgumentParser"
-          AP_ROOT="$PWD/swift-argument-parser-1.0.3/Sources"
-          mkdir -p "$AP_DIR_ABS"
-
-          TOOLINFO_FILES=()
-          while IFS= read -r -d '' file; do TOOLINFO_FILES+=("$file"); done < <(find "$AP_ROOT/ArgumentParserToolInfo" -type f -name '*.swift' -print0)
-          if [[ ${#TOOLINFO_FILES[@]} -eq 0 ]]; then
-            echo "::error::No ArgumentParserToolInfo Swift sources found."
-            exit 1
-          fi
-
-          echo "Building ArgumentParserToolInfo (${#TOOLINFO_FILES[@]} files)"
-          xcrun --sdk iphoneos swiftc \
-            -target arm64-apple-ios14.0 \
-            -sdk "$SDKROOT" \
-            -emit-module -emit-library -static \
-            -module-name ArgumentParserToolInfo \
-            -swift-version 5 -O \
-            "${TOOLINFO_FILES[@]}" \
-            -emit-module-path "$AP_DIR_ABS/ArgumentParserToolInfo.swiftmodule" \
-            -o "$AP_DIR_ABS/libArgumentParserToolInfo.a"
-
-          ARGUMENTPARSER_FILES=()
-          while IFS= read -r -d '' file; do ARGUMENTPARSER_FILES+=("$file"); done < <(find "$AP_ROOT/ArgumentParser" -type f -name '*.swift' -print0)
-          if [[ ${#ARGUMENTPARSER_FILES[@]} -eq 0 ]]; then
-            echo "::error::No ArgumentParser Swift sources found."
-            exit 1
-          fi
-
-          echo "Building ArgumentParser (${#ARGUMENTPARSER_FILES[@]} files)"
-          xcrun --sdk iphoneos swiftc \
-            -target arm64-apple-ios14.0 \
-            -sdk "$SDKROOT" \
-            -emit-module -emit-library -static \
-            -module-name ArgumentParser \
-            -swift-version 5 -O \
-            -I "$AP_DIR_ABS" \
-            "${ARGUMENTPARSER_FILES[@]}" \
-            -emit-module-path "$AP_DIR_ABS/ArgumentParser.swiftmodule" \
-            -o "$AP_DIR_ABS/libArgumentParser.a"
-
-          test -s "$AP_DIR_ABS/ArgumentParser.swiftmodule"
-          test -s "$AP_DIR_ABS/ArgumentParserToolInfo.swiftmodule"
-          test -s "$AP_DIR_ABS/libArgumentParser.a"
-          test -s "$AP_DIR_ABS/libArgumentParserToolInfo.a"
-          ls -lah "$AP_DIR_ABS"
-
-      # Makefile normally clones SwiftTerm 1.2.1. Clone and patch it here first,
-      # then create the marker Makefile checks so it does not replace the patched source.
-      - name: Prepare SwiftTerm 1.2.1 Xcode 16.4 compatibility patch
-        shell: bash
+      - name: Run host-side tests
+        working-directory: ${{ github.workspace }}/Hoshino-src
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR"
+          make smoke
 
-          SWIFTTERM_DIR="vendor/SwiftTerm"
-          TEXT_INPUT="$SWIFTTERM_DIR/Sources/SwiftTerm/iOS/iOSTextInput.swift"
-          SWIFTTERM_MARKER="$SWIFTTERM_DIR/.santander-cloned"
-
-          rm -rf "$SWIFTTERM_DIR"
-          mkdir -p vendor
-          git clone --depth 1 --single-branch --branch 1.2.1 \
-            https://github.com/migueldeicaza/SwiftTerm.git "$SWIFTTERM_DIR"
-
-          test -f "$TEXT_INPUT"
-
-          # Logger.critical(_:) uses OSLogMessage's compiler-special interpolation.
-          # This SDK/toolchain combination rejects those calls from this source file.
-          # NSLog accepts a normal Foundation String, preserving the diagnostic text
-          # without invoking the OSLog interpolation type-checking path.
-          python3 - "$TEXT_INPUT" <<'PYTHON'
-          from pathlib import Path
-          import sys
-
-          path = Path(sys.argv[1])
-          source = path.read_text(encoding="utf-8")
-
-          replacements = {
-              r'log.critical("Attempt to access [\(r._start)..<\(r.end) on a string with \(self.textInputStorage.count)")':
-              r'NSLog("Attempt to access [\(r._start)..<\(r.end) on a string with \(self.textInputStorage.count)")',
-              r'log.critical("xTextPosition created with start=\(start), resetting to 0")':
-              r'NSLog("xTextPosition created with start=\(start), resetting to 0")',
-              r'log.critical("xTextRange created with end=\(end) < start=\(start), resetting")':
-              r'NSLog("xTextRange created with end=\(end) < start=\(start), resetting")',
-          }
-
-          for old, new in replacements.items():
-              if old in source:
-                  source = source.replace(old, new, 1)
-                  print(f"Patched: {old.split(chr(34))[1]}")
-              elif new in source:
-                  print(f"Already patched: {new.split(chr(34))[1]}")
-              else:
-                  raise SystemExit(f"Expected SwiftTerm 1.2.1 log statement not found: {old}")
-
-          if "log.critical(" in source:
-              raise SystemExit("One or more Logger.critical calls remain in iOSTextInput.swift")
-          if source.count("NSLog(") < 3:
-              raise SystemExit("Expected all 3 diagnostic statements to use NSLog")
-
-          # The previous workflow trial added this unnecessary import. A clean clone
-          # should not need it after moving these messages to Foundation NSLog.
-          source = source.replace("import CoreGraphics\nimport os\n", "import CoreGraphics\n", 1)
-          path.write_text(source, encoding="utf-8")
-          print("Validated all 3 SwiftTerm diagnostics now use Foundation NSLog")
-          PYTHON
-
-          echo "--- Patched SwiftTerm diagnostics ---"
-          grep -n 'NSLog(' "$TEXT_INPUT"
-          if grep -n 'log\.critical(' "$TEXT_INPUT"; then
-            echo "::error::SwiftTerm OSLog interpolation calls remain after patch"
-            exit 1
-          fi
-
-          # This marker is the Makefile's dependency target; do not omit it.
-          touch "$SWIFTTERM_MARKER"
-          test -f "$SWIFTTERM_MARKER"
-          git -C "$SWIFTTERM_DIR" rev-parse --short HEAD
-
-      - name: Build IPA
-        shell: bash
+      - name: Verify Xcode resolves the exact iOS 16.5 SDK
+        working-directory: ${{ github.workspace }}/Hoshino-src
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR"
+          BUILD_SETTINGS="$(xcodebuild \
+            -project Hoshino.xcodeproj \
+            -scheme Hoshino \
+            -configuration Release \
+            -sdk "$IOS_SDK_PATH" \
+            -showBuildSettings)"
+          printf '%s\n' "$BUILD_SETTINGS" | grep -F "SDKROOT = $IOS_SDK_PATH"
 
-          test -s build/ArgumentParser/ArgumentParser.swiftmodule
-          test -s build/ArgumentParser/ArgumentParserToolInfo.swiftmodule
-          test -s build/ArgumentParser/libArgumentParser.a
-          test -s build/ArgumentParser/libArgumentParserToolInfo.a
-          test -f vendor/SwiftTerm/.santander-cloned
-
-          mkdir -p logs
-          BUILD_LOG="logs/Santander-build-$(date +%Y%m%d-%H%M%S).log"
-          set -o pipefail
-          make ipa 2>&1 | tee "$BUILD_LOG"
-
-          test -s build/AppSantander.ipa
-          echo "IPA built: ${SOURCE_DIR}/build/AppSantander.ipa"
-
-      - name: Automatic CI smoke tests
-        shell: bash
+      - name: Build and package IPA with iOS 16.5 SDK
+        working-directory: ${{ github.workspace }}/Hoshino-src
         run: |
           set -euo pipefail
-          cd "$SOURCE_DIR"
-          make test TEST_BACKEND=ci
+          make clean
+          make ipa \
+            SDK="$IOS_SDK_PATH" \
+            IPA_NAME="$IPA_NAME" \
+            ENTITLEMENTS="Hoshino/Entitlements/TrollStore.entitlements"
 
-      - name: Upload test logs and reports
-        if: always()
+          IPA_PATH="$SOURCE_DIR/build/$IPA_NAME.ipa"
+          test -s "$IPA_PATH"
+          unzip -tq "$IPA_PATH"
+          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+
+      - name: Upload Hoshino IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Santander-test-logs
-          path: source/Santander-main/logs/
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Upload IPA
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Santander-IPA
-          path: source/Santander-main/build/AppSantander.ipa
+          name: Hoshino-iOS16.5-${{ github.sha }}
+          path: ${{ github.workspace }}/Hoshino-src/build/Hoshino-iOS16.5.ipa
           if-no-files-found: error
-          retention-days: 7
+          compression-level: 0
+          retention-days: 14
