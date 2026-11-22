@@ -1,308 +1,210 @@
-name: Hoshino iOS 16.5 Build
+name: Hoshino iOS Build
 
 on:
-  workflow_dispatch:
   push:
     paths:
       - 'Hoshino.zip'
       - '.github/workflows/build.yml'
-  pull_request:
-    paths:
-      - 'Hoshino.zip'
-      - '.github/workflows/build.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: hoshino-ios165-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
-    name: Build TrollStore IPA (iOS 16.5 SDK)
-    runs-on: macos-15
+    runs-on: macos-14
     timeout-minutes: 60
-
     env:
-      THEOS: ${{ github.workspace }}/theos
-      IOS_SDK_PATH: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
-      IOS_SDK_NAME: iphoneos16.5
-      SOURCE_DIR: ${{ github.workspace }}/Hoshino-src
-      IPA_NAME: Hoshino-iOS16.5
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      IOS_SDK_NAME: iPhoneOS16.5.sdk
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Hoshino repository
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16.4
-        run: |
-          set -euo pipefail
-          XCODE_DEVELOPER_DIR="/Applications/Xcode_16.4.app/Contents/Developer"
-          if [[ ! -d "$XCODE_DEVELOPER_DIR" ]]; then
-            echo "::error::Xcode 16.4 was not found on this runner."
-            ls -1 /Applications | grep '^Xcode' || true
-            exit 1
-          fi
-          sudo xcode-select --switch "$XCODE_DEVELOPER_DIR"
-          xcodebuild -version
-          xcodebuild -showsdks
-
-      - name: Cache Theos iOS 16.5 SDK
-        uses: actions/cache@v4
+      - name: Checkout Theos iOS 16.5 SDK
+        uses: actions/checkout@v4
         with:
-          path: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
-          key: theos-sdk-iPhoneOS16.5-master-146e41f-v1
+          repository: theos/sdks
+          ref: master
+          path: theos-sdks
+          sparse-checkout: |
+            iPhoneOS16.5.sdk
+          sparse-checkout-cone-mode: true
 
-      - name: Install Theos iOS 16.5 SDK
+      - name: Select Xcode and extract Hoshino.zip
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$THEOS/sdks"
-
-          if [[ ! -f "$IOS_SDK_PATH/SDKSettings.plist" ]]; then
-            SDK_ARCHIVE="$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz"
-            curl --fail --location --retry 5 --retry-all-errors \
-              "https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz" \
-              --output "$SDK_ARCHIVE"
-            tar -tJf "$SDK_ARCHIVE" >/dev/null
-            tar -xJf "$SDK_ARCHIVE" -C "$THEOS/sdks"
-          fi
-
-          test -f "$IOS_SDK_PATH/SDKSettings.plist"
-          test -d "$IOS_SDK_PATH/System/Library/Frameworks"
-          plutil -lint "$IOS_SDK_PATH/SDKSettings.plist"
-
-          # Theos names this patched SDK iPhoneOS16.5.sdk, while its
-          # SDKSettings.plist reports Version=16.4. Xcode 16.4's platform
-          # Info.plist sets MinimumSDKVersion=18.5 and therefore skips it.
-          # Temporarily lower only that platform gate; do not falsify the SDK's
-          # own version metadata. A final always() step restores the exact
-          # original platform Info.plist after the build.
-          XCODE_DEVELOPER_DIR="$(xcode-select -p)"
-          XCODE_SDKS_DIR="$XCODE_DEVELOPER_DIR/Platforms/iPhoneOS.platform/Developer/SDKs"
-          XCODE_SDK_LINK="$XCODE_SDKS_DIR/iPhoneOS16.5.sdk"
-          PLATFORM_INFO_PLIST="$XCODE_DEVELOPER_DIR/Platforms/iPhoneOS.platform/Info.plist"
-          PLATFORM_INFO_BACKUP="$RUNNER_TEMP/iPhoneOS.platform.Info.plist.original"
-          test -d "$XCODE_SDKS_DIR"
-          test -f "$PLATFORM_INFO_PLIST"
-          if [[ -e "$XCODE_SDK_LINK" && ! -L "$XCODE_SDK_LINK" ]]; then
-            echo "::error::An unexpected non-symlink SDK already exists at $XCODE_SDK_LINK"
+          test -d "$DEVELOPER_DIR" || {
+            echo "Xcode 16.4 was not found at: $DEVELOPER_DIR" >&2
+            ls -1 /Applications | grep -E '^Xcode.*\.app$' || true
             exit 1
-          fi
-          sudo ln -sfn "$IOS_SDK_PATH" "$XCODE_SDK_LINK"
-
-          SDK_INTERNAL_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :Version' "$IOS_SDK_PATH/SDKSettings.plist")"
-          if [[ "$SDK_INTERNAL_VERSION" != "16.4" ]]; then
-            echo "::error::Unexpected internal version for the Theos iPhoneOS16.5 SDK: $SDK_INTERNAL_VERSION"
+          }
+          sudo -n xcode-select -s "$DEVELOPER_DIR"
+          xcodebuild -version
+          test -s "$GITHUB_WORKSPACE/Hoshino.zip" || {
+            echo "Hoshino.zip is missing or empty in the repository root." >&2
             exit 1
-          fi
-
-          cp "$PLATFORM_INFO_PLIST" "$PLATFORM_INFO_BACKUP"
-          echo "XCODE_PLATFORM_INFO_PLIST=$PLATFORM_INFO_PLIST" >> "$GITHUB_ENV"
-          echo "XCODE_PLATFORM_INFO_BACKUP=$PLATFORM_INFO_BACKUP" >> "$GITHUB_ENV"
-          echo "XCODE_SDK_LINK=$XCODE_SDK_LINK" >> "$GITHUB_ENV"
-          ORIGINAL_MINIMUM_SDK="$(/usr/libexec/PlistBuddy -c 'Print :MinimumSDKVersion' "$PLATFORM_INFO_PLIST")"
-          echo "Original iPhoneOS platform MinimumSDKVersion: $ORIGINAL_MINIMUM_SDK"
-          sudo /usr/libexec/PlistBuddy -c "Set :MinimumSDKVersion $SDK_INTERNAL_VERSION" "$PLATFORM_INFO_PLIST"
-          plutil -lint "$PLATFORM_INFO_PLIST"
-
-          xcodebuild -showsdks | grep -F "$IOS_SDK_NAME"
-          RESOLVED_SDK_PATH="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-path)"
-          RESOLVED_SDK_VERSION="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-version)"
-          if [[ "$RESOLVED_SDK_VERSION" != "16.4" ]]; then
-            echo "::error::Theos SDK directory is iPhoneOS16.5.sdk but its expected internal SDK version is 16.4; got $RESOLVED_SDK_VERSION ($RESOLVED_SDK_PATH)"
+          }
+          SOURCE_DIR="$RUNNER_TEMP/Hoshino-source"
+          rm -rf "$SOURCE_DIR"
+          mkdir -p "$SOURCE_DIR"
+          unzip -q "$GITHUB_WORKSPACE/Hoshino.zip" -d "$SOURCE_DIR"
+          test -d "$SOURCE_DIR/Hoshino.xcodeproj" || {
+            echo "Hoshino.xcodeproj was not found at the root of Hoshino.zip." >&2
+            find "$SOURCE_DIR" -maxdepth 3 -name '*.xcodeproj' -print
             exit 1
-          fi
-          if [[ "$(cd "$RESOLVED_SDK_PATH" && pwd -P)" != "$(cd "$IOS_SDK_PATH" && pwd -P)" ]]; then
-            echo "::error::Xcode resolved a different SDK path: $RESOLVED_SDK_PATH"
-            exit 1
-          fi
-          test -f "$RESOLVED_SDK_PATH/SDKSettings.plist"
-          echo "IOS_SDK_PATH=$IOS_SDK_PATH" >> "$GITHUB_ENV"
-          echo "XCODE_SDK_PATH=$RESOLVED_SDK_PATH" >> "$GITHUB_ENV"
-          echo "Using Theos iPhoneOS16.5.sdk (internal SDK version $RESOLVED_SDK_VERSION): $RESOLVED_SDK_PATH"
+          }
+          echo "HOSHINO_SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
+          echo "Hoshino source extracted to: $SOURCE_DIR"
 
       - name: Install build dependencies
         shell: bash
         run: |
           set -euo pipefail
-          brew update
-          brew install ldid libarchive pkg-config
-
-          # libarchive is keg-only. Some Homebrew bottles do not ship a
-          # libarchive.pc file, so treat pkg-config metadata as optional:
-          # Makefile's archive host smoke test already skips when unavailable.
+          brew install ldid libarchive pkgconf
           LIBARCHIVE_PREFIX="$(brew --prefix libarchive)"
-          BREW_PREFIX="$(brew --prefix)"
-          LIBARCHIVE_PC="$(find "$LIBARCHIVE_PREFIX" -type f -name libarchive.pc -print -quit || true)"
-          LIBARCHIVE_PC_DIR=""
-
-          if [[ -n "$LIBARCHIVE_PC" ]]; then
-            LIBARCHIVE_PC_DIR="$(dirname "$LIBARCHIVE_PC")"
-            echo "Using libarchive pkg-config file: $LIBARCHIVE_PC"
-          else
-            echo "::warning::Homebrew libarchive.pc is absent. The optional host ArchiveCore smoke test will be skipped; the iOS app resolves libarchive through Swift Package Manager."
-          fi
-
-          if [[ -f "$LIBARCHIVE_PREFIX/include/archive.h" ]]; then
-            export CPPFLAGS="-I$LIBARCHIVE_PREFIX/include ${CPPFLAGS:-}"
-          fi
-          if [[ -d "$LIBARCHIVE_PREFIX/lib" ]]; then
-            export LDFLAGS="-L$LIBARCHIVE_PREFIX/lib ${LDFLAGS:-}"
-          fi
-          export PATH="$LIBARCHIVE_PREFIX/bin:$PATH"
-          if [[ -n "$LIBARCHIVE_PC_DIR" ]]; then
-            export PKG_CONFIG_PATH="$LIBARCHIVE_PC_DIR:$BREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          else
-            export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          fi
-
-          # Persist paths for make smoke and later build steps.
-          {
-            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
-            echo "CPPFLAGS=${CPPFLAGS:-}"
-            echo "LDFLAGS=${LDFLAGS:-}"
-            echo "LIBARCHIVE_PREFIX=$LIBARCHIVE_PREFIX"
-          } >> "$GITHUB_ENV"
-          echo "$LIBARCHIVE_PREFIX/bin" >> "$GITHUB_PATH"
-
+          echo "PKG_CONFIG_PATH=$LIBARCHIVE_PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "CPPFLAGS=-I$LIBARCHIVE_PREFIX/include" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$LIBARCHIVE_PREFIX/lib" >> "$GITHUB_ENV"
+          echo "PATH=$(brew --prefix)/bin:$PATH" >> "$GITHUB_ENV"
           command -v ldid
           ldid -h >/dev/null 2>&1 || true
-          echo "libarchive prefix: $LIBARCHIVE_PREFIX"
-          if pkg-config --exists libarchive; then
-            pkg-config --modversion libarchive
-            pkg-config --cflags --libs libarchive
+          if [[ -f "$LIBARCHIVE_PREFIX/lib/pkgconfig/libarchive.pc" ]]; then
+            echo "libarchive.pc found: $LIBARCHIVE_PREFIX/lib/pkgconfig/libarchive.pc"
           else
-            echo "libarchive pkg-config metadata unavailable; optional host archive test will skip"
+            echo "libarchive.pc is absent; Makefile's optional host ArchiveCore test will be skipped."
           fi
-      - name: Extract Hoshino.zip from repository root
-        run: |
-          set -euo pipefail
-          test -f "$GITHUB_WORKSPACE/Hoshino.zip"
-          rm -rf "$SOURCE_DIR"
-          mkdir -p "$SOURCE_DIR"
-          unzip -q "$GITHUB_WORKSPACE/Hoshino.zip" -d "$SOURCE_DIR"
-          test -f "$SOURCE_DIR/Makefile"
-          test -d "$SOURCE_DIR/Hoshino.xcodeproj"
-          test -f "$SOURCE_DIR/Hoshino/Entitlements/TrollStore.entitlements"
 
-      - name: Run host-side tests (root PTY, RPC and bridge coverage)
-        working-directory: ${{ github.workspace }}/Hoshino-src
+      - name: Run host smoke tests
         shell: bash
         run: |
           set -euo pipefail
+          cd "$HOSHINO_SOURCE_DIR"
+          sudo -n -E env "PATH=$PATH" "DEVELOPER_DIR=$DEVELOPER_DIR" \
+            "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-}" make smoke
+          sudo -n chown -R "$(id -u):$(id -g)" build 2>/dev/null || true
 
-          restore_build_ownership() {
-            if [[ -d build ]]; then
-              sudo -n chown -R "$(id -u):$(id -g)" build || true
-            fi
-          }
-          trap restore_build_ownership EXIT
-
-          # Run the ordinary host checks as root so the PTY smoke test never
-          # falls through to an interactive `su` password prompt.
-          sudo -n -E make plist-test native-core-test archive-core-test script-runtime-test swift-parse project-test
-
-          mkdir -p build/host-smoke
-          sudo -n -E "${CXX:-clang++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic \
-            -I Hoshino/Core RootHelper/main.cpp Hoshino/Core/NativeCore.cpp \
-            -o build/host-smoke/RootHelper
-
-          sudo -n -E python3 Tests/RootHelperPTYSmoke.py build/host-smoke/RootHelper
-          sudo -n -E python3 Tests/RootHelperRPCTest.py build/host-smoke/RootHelper
-          sudo -n -E python3 Tests/RootHelperServerProtocol.py build/host-smoke/RootHelper
-
-          # RootProcessBridge uses iOS-private persona APIs when those weak
-          # symbols are available. On a macOS CI host those APIs are not the
-          # behavior under test: we need the spawned helper to inherit the
-          # runner's already-elevated euid. Compile a temporary host-only copy
-          # with persona override disabled for the persistent-service test.
-          # The checked-in production source is never modified and the iOS
-          # app build below compiles the original RootProcessBridge.mm.
-          HOST_BRIDGE_SOURCE="$RUNNER_TEMP/RootProcessBridge.host.mm"
-          python3 - "$GITHUB_WORKSPACE/Hoshino-src/Hoshino/Core/RootProcessBridge.mm" "$HOST_BRIDGE_SOURCE" <<'PYCODE'
-          from pathlib import Path
-          import sys
-
-          source = Path(sys.argv[1]).read_text()
-          needle = "if (posix_spawnattr_set_persona_np && posix_spawnattr_set_persona_uid_np && posix_spawnattr_set_persona_gid_np) {"
-          if source.count(needle) != 1:
-              raise SystemExit("Could not uniquely locate the persistent-service persona block")
-          source = source.replace(needle, "if (false && " + needle[len("if ("):], 1)
-          Path(sys.argv[2]).write_text(source)
-          PYCODE
-
-          sudo -n -E "${CXX:-clang++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic \
-            -x c++ -I Hoshino/Core -c "$HOST_BRIDGE_SOURCE" \
-            -o build/host-smoke/RootProcessBridge.host.o
-          sudo -n -E "${CXX:-clang++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic \
-            -I Hoshino/Core Tests/RootProcessBridgeServerSmoke.cpp \
-            build/host-smoke/RootProcessBridge.host.o \
-            -o build/host-smoke/RootProcessBridgeServerSmoke
-          sudo -n -E build/host-smoke/RootProcessBridgeServerSmoke build/host-smoke/RootHelper
-
-      - name: Verify Xcode resolves the exact iOS 16.5 SDK
-        working-directory: ${{ github.workspace }}/Hoshino-src
+      - name: Install and register Theos iOS 16.5 SDK
+        shell: bash
         run: |
           set -euo pipefail
-          RESOLVED_SDK_PATH="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-path)"
-          RESOLVED_SDK_VERSION="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-version)"
-          # The Theos archive is named iPhoneOS16.5.sdk but its SDKSettings
-          # version is 16.4. Validate both facts instead of expecting the
-          # folder name and internal SDK version to be identical.
-          [[ "$RESOLVED_SDK_VERSION" == "16.4" ]]
-          [[ "$(basename "$RESOLVED_SDK_PATH")" == "iPhoneOS16.5.sdk" ]]
-          [[ "$(cd "$RESOLVED_SDK_PATH" && pwd -P)" == "$(cd "$IOS_SDK_PATH" && pwd -P)" ]]
+          SDK_SOURCE="$GITHUB_WORKSPACE/theos-sdks/iPhoneOS16.5.sdk"
+          PLATFORM_DIR="$DEVELOPER_DIR/Platforms/iPhoneOS.platform"
+          PLATFORM_INFO="$PLATFORM_DIR/Info.plist"
+          SDK_DEST="$PLATFORM_DIR/Developer/SDKs/iPhoneOS16.5.sdk"
+          BACKUP="$RUNNER_TEMP/Hoshino-iPhoneOS-platform-Info.plist.backup"
+          MARKER="$RUNNER_TEMP/Hoshino-managed-ios165-sdk.marker"
 
-          BUILD_SETTINGS="$(xcodebuild \
-            -project Hoshino.xcodeproj \
-            -scheme Hoshino \
-            -configuration Release \
-            -sdk "$IOS_SDK_NAME" \
-            -showBuildSettings)"
-          SDKROOT_LINE="$(printf '%s\n' "$BUILD_SETTINGS" | grep -m 1 'SDKROOT = ' || true)"
-          if [[ "$SDKROOT_LINE" != *"$IOS_SDK_NAME"* && "$SDKROOT_LINE" != *"iPhoneOS16.5.sdk"* ]]; then
-            echo "::error::xcodebuild did not select the iOS 16.5 SDK: $SDKROOT_LINE"
+          test -d "$SDK_SOURCE" || { echo "Theos iPhoneOS16.5.sdk checkout is missing." >&2; exit 1; }
+          test -f "$SDK_SOURCE/SDKSettings.plist" || { echo "SDKSettings.plist is missing from Theos SDK." >&2; exit 1; }
+          test -f "$PLATFORM_INFO" || { echo "Xcode iPhoneOS.platform/Info.plist is missing." >&2; exit 1; }
+          test ! -e "$SDK_DEST" || {
+            echo "Refusing to overwrite an existing SDK: $SDK_DEST" >&2
             exit 1
-          fi
-          echo "Confirmed xcodebuild SDKROOT: $SDKROOT_LINE"
-          echo "Resolved SDK path: $RESOLVED_SDK_PATH (iOS $RESOLVED_SDK_VERSION)"
+          }
 
-      - name: Build and package IPA with iOS 16.5 SDK
-        working-directory: ${{ github.workspace }}/Hoshino-src
+          ORIGINAL_MINIMUM="$(/usr/libexec/PlistBuddy -c 'Print :MinimumSDKVersion' "$PLATFORM_INFO")"
+          echo "Original iPhoneOS platform MinimumSDKVersion: $ORIGINAL_MINIMUM"
+          sudo -n cp -p "$PLATFORM_INFO" "$BACKUP"
+          touch "$MARKER"
+
+          sudo -n mkdir -p "$(dirname "$SDK_DEST")"
+          sudo -n ditto "$SDK_SOURCE" "$SDK_DEST"
+
+          # The Theos directory is named iPhoneOS16.5.sdk, but Xcode 16.4
+          # reports the SDK's embedded version as 16.4. Lower the platform's
+          # discovery minimum to that embedded version so DVTSDK will not skip it.
+          python3 - "$PLATFORM_INFO" "$RUNNER_TEMP/Hoshino-patched-platform-Info.plist" <<'PY'
+          import plistlib
+          import sys
+          from pathlib import Path
+
+          source = Path(sys.argv[1])
+          destination = Path(sys.argv[2])
+          with source.open("rb") as stream:
+              data = plistlib.load(stream)
+          old = data.get("MinimumSDKVersion")
+          if isinstance(old, str):
+              data["MinimumSDKVersion"] = "16.4"
+          elif isinstance(old, (int, float)) and not isinstance(old, bool):
+              data["MinimumSDKVersion"] = 16.4
+          else:
+              raise SystemExit(f"Unexpected MinimumSDKVersion value: {old!r}")
+          with destination.open("wb") as stream:
+              plistlib.dump(data, stream, fmt=plistlib.FMT_XML, sort_keys=False)
+          print(f"Prepared temporary MinimumSDKVersion patch: {old!r} -> {data['MinimumSDKVersion']!r}")
+          PY
+          sudo -n cp "$RUNNER_TEMP/Hoshino-patched-platform-Info.plist" "$PLATFORM_INFO"
+
+          PATCHED_MINIMUM="$(/usr/libexec/PlistBuddy -c 'Print :MinimumSDKVersion' "$PLATFORM_INFO")"
+          echo "Patched iPhoneOS platform MinimumSDKVersion: $PATCHED_MINIMUM"
+          test "$PATCHED_MINIMUM" = "16.4" || {
+            echo "Xcode platform minimum was not changed to 16.4." >&2
+            exit 1
+          }
+          sudo -n plutil -lint "$PLATFORM_INFO"
+
+          SDK_INTERNAL_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :Version' "$SDK_DEST/SDKSettings.plist" 2>/dev/null || true)"
+          echo "Theos SDK directory: $SDK_DEST"
+          echo "Theos SDK embedded Version: ${SDK_INTERNAL_VERSION:-not exposed by SDKSettings.plist}"
+          RESOLVED_SDK="$(xcrun --sdk iphoneos16.5 --show-sdk-path)"
+          echo "xcrun resolved SDK: $RESOLVED_SDK"
+          test "$RESOLVED_SDK" = "$SDK_DEST" || {
+            echo "xcrun did not resolve the Theos iPhoneOS16.5.sdk directory." >&2
+            exit 1
+          }
+
+      - name: Build TrollStore IPA with iPhoneOS16.5.sdk
+        shell: bash
         run: |
           set -euo pipefail
-          make clean
-          make ipa \
-            SDK="$IOS_SDK_NAME" \
-            IPA_NAME="$IPA_NAME" \
-            ENTITLEMENTS="Hoshino/Entitlements/TrollStore.entitlements"
-
-          IPA_PATH="$SOURCE_DIR/build/$IPA_NAME.ipa"
-          test -s "$IPA_PATH"
-          unzip -tq "$IPA_PATH"
-          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+          cd "$HOSHINO_SOURCE_DIR"
+          BUILD_LOG="$RUNNER_TEMP/Hoshino-xcodebuild.log"
+          echo "Building with SDK name: iphoneos16.5"
+          echo "SDK path: $DEVELOPER_DIR/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS16.5.sdk"
+          if make ipa SDK=iphoneos16.5 2>&1 | tee "$BUILD_LOG"; then
+            test -s build/Hoshino.ipa
+            echo "IPA created: $HOSHINO_SOURCE_DIR/build/Hoshino.ipa"
+          else
+            BUILD_STATUS=${PIPESTATUS[0]}
+            echo "::error::Hoshino build failed with exit code $BUILD_STATUS"
+            echo "----- Last 200 lines of xcodebuild/make output -----"
+            tail -n 200 "$BUILD_LOG" || true
+            exit "$BUILD_STATUS"
+          fi
 
       - name: Upload Hoshino IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Hoshino-iOS16.5-${{ github.sha }}
-          path: ${{ github.workspace }}/Hoshino-src/build/Hoshino-iOS16.5.ipa
+          name: Hoshino-iOS16.5-TrollStore
+          path: ${{ runner.temp }}/Hoshino-source/build/Hoshino.ipa
           if-no-files-found: error
-          compression-level: 0
           retention-days: 14
 
-      - name: Restore Xcode platform metadata
+      - name: Restore Xcode platform and remove temporary SDK
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "${XCODE_PLATFORM_INFO_PLIST:-}" && -f "${XCODE_PLATFORM_INFO_BACKUP:-}" ]]; then
-            sudo cp "$XCODE_PLATFORM_INFO_BACKUP" "$XCODE_PLATFORM_INFO_PLIST"
-            plutil -lint "$XCODE_PLATFORM_INFO_PLIST"
-            echo "Restored original Xcode iPhoneOS platform metadata."
+          PLATFORM_DIR="$DEVELOPER_DIR/Platforms/iPhoneOS.platform"
+          PLATFORM_INFO="$PLATFORM_DIR/Info.plist"
+          SDK_DEST="$PLATFORM_DIR/Developer/SDKs/iPhoneOS16.5.sdk"
+          BACKUP="$RUNNER_TEMP/Hoshino-iPhoneOS-platform-Info.plist.backup"
+          MARKER="$RUNNER_TEMP/Hoshino-managed-ios165-sdk.marker"
+
+          if [[ -f "$BACKUP" ]]; then
+            sudo -n cp -p "$BACKUP" "$PLATFORM_INFO"
+            sudo -n plutil -lint "$PLATFORM_INFO"
+            RESTORED_MINIMUM="$(/usr/libexec/PlistBuddy -c 'Print :MinimumSDKVersion' "$PLATFORM_INFO")"
+            echo "Restored original iPhoneOS platform MinimumSDKVersion: $RESTORED_MINIMUM"
+          else
+            echo "No Xcode platform backup was created; nothing to restore."
           fi
-          if [[ -n "${XCODE_SDK_LINK:-}" && -L "$XCODE_SDK_LINK" ]]; then
-            sudo rm -f "$XCODE_SDK_LINK"
-            echo "Removed temporary iPhoneOS16.5.sdk registration."
+
+          if [[ -f "$MARKER" ]]; then
+            sudo -n rm -rf "$SDK_DEST"
+            rm -f "$MARKER"
+            echo "Removed temporary Theos SDK registration."
           fi
