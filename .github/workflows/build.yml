@@ -72,29 +72,55 @@ jobs:
           test -d "$IOS_SDK_PATH/System/Library/Frameworks"
           plutil -lint "$IOS_SDK_PATH/SDKSettings.plist"
 
-          # xcodebuild does not reliably resolve an SDK stored at an arbitrary
-          # workspace path. Register the patched Theos SDK under the selected
-          # Xcode iPhoneOS platform, then select it by its canonical SDK name.
-          XCODE_SDKS_DIR="$(xcode-select -p)/Platforms/iPhoneOS.platform/Developer/SDKs"
+          # Theos names this patched SDK iPhoneOS16.5.sdk, while its
+          # SDKSettings.plist reports Version=16.4. Xcode 16.4's platform
+          # Info.plist sets MinimumSDKVersion=18.5 and therefore skips it.
+          # Temporarily lower only that platform gate; do not falsify the SDK's
+          # own version metadata. A final always() step restores the exact
+          # original platform Info.plist after the build.
+          XCODE_DEVELOPER_DIR="$(xcode-select -p)"
+          XCODE_SDKS_DIR="$XCODE_DEVELOPER_DIR/Platforms/iPhoneOS.platform/Developer/SDKs"
           XCODE_SDK_LINK="$XCODE_SDKS_DIR/iPhoneOS16.5.sdk"
+          PLATFORM_INFO_PLIST="$XCODE_DEVELOPER_DIR/Platforms/iPhoneOS.platform/Info.plist"
+          PLATFORM_INFO_BACKUP="$RUNNER_TEMP/iPhoneOS.platform.Info.plist.original"
           test -d "$XCODE_SDKS_DIR"
+          test -f "$PLATFORM_INFO_PLIST"
           if [[ -e "$XCODE_SDK_LINK" && ! -L "$XCODE_SDK_LINK" ]]; then
             echo "::error::An unexpected non-symlink SDK already exists at $XCODE_SDK_LINK"
             exit 1
           fi
           sudo ln -sfn "$IOS_SDK_PATH" "$XCODE_SDK_LINK"
-          xcodebuild -showsdks | grep -F "$IOS_SDK_NAME"
 
+          SDK_INTERNAL_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :Version' "$IOS_SDK_PATH/SDKSettings.plist")"
+          if [[ "$SDK_INTERNAL_VERSION" != "16.4" ]]; then
+            echo "::error::Unexpected internal version for the Theos iPhoneOS16.5 SDK: $SDK_INTERNAL_VERSION"
+            exit 1
+          fi
+
+          cp "$PLATFORM_INFO_PLIST" "$PLATFORM_INFO_BACKUP"
+          echo "XCODE_PLATFORM_INFO_PLIST=$PLATFORM_INFO_PLIST" >> "$GITHUB_ENV"
+          echo "XCODE_PLATFORM_INFO_BACKUP=$PLATFORM_INFO_BACKUP" >> "$GITHUB_ENV"
+          echo "XCODE_SDK_LINK=$XCODE_SDK_LINK" >> "$GITHUB_ENV"
+          ORIGINAL_MINIMUM_SDK="$(/usr/libexec/PlistBuddy -c 'Print :MinimumSDKVersion' "$PLATFORM_INFO_PLIST")"
+          echo "Original iPhoneOS platform MinimumSDKVersion: $ORIGINAL_MINIMUM_SDK"
+          sudo /usr/libexec/PlistBuddy -c "Set :MinimumSDKVersion $SDK_INTERNAL_VERSION" "$PLATFORM_INFO_PLIST"
+          plutil -lint "$PLATFORM_INFO_PLIST"
+
+          xcodebuild -showsdks | grep -F "$IOS_SDK_NAME"
           RESOLVED_SDK_PATH="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-path)"
           RESOLVED_SDK_VERSION="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-version)"
-          if [[ "$RESOLVED_SDK_VERSION" != "16.5" ]]; then
-            echo "::error::Expected iOS SDK 16.5, got $RESOLVED_SDK_VERSION ($RESOLVED_SDK_PATH)"
+          if [[ "$RESOLVED_SDK_VERSION" != "16.4" ]]; then
+            echo "::error::Theos SDK directory is iPhoneOS16.5.sdk but its expected internal SDK version is 16.4; got $RESOLVED_SDK_VERSION ($RESOLVED_SDK_PATH)"
+            exit 1
+          fi
+          if [[ "$(cd "$RESOLVED_SDK_PATH" && pwd -P)" != "$(cd "$IOS_SDK_PATH" && pwd -P)" ]]; then
+            echo "::error::Xcode resolved a different SDK path: $RESOLVED_SDK_PATH"
             exit 1
           fi
           test -f "$RESOLVED_SDK_PATH/SDKSettings.plist"
           echo "IOS_SDK_PATH=$IOS_SDK_PATH" >> "$GITHUB_ENV"
           echo "XCODE_SDK_PATH=$RESOLVED_SDK_PATH" >> "$GITHUB_ENV"
-          echo "Using patched Theos SDK: $RESOLVED_SDK_PATH (iOS $RESOLVED_SDK_VERSION)"
+          echo "Using Theos iPhoneOS16.5.sdk (internal SDK version $RESOLVED_SDK_VERSION): $RESOLVED_SDK_PATH"
 
       - name: Install build dependencies
         shell: bash
@@ -221,7 +247,11 @@ jobs:
           set -euo pipefail
           RESOLVED_SDK_PATH="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-path)"
           RESOLVED_SDK_VERSION="$(xcrun --sdk "$IOS_SDK_NAME" --show-sdk-version)"
-          [[ "$RESOLVED_SDK_VERSION" == "16.5" ]]
+          # The Theos archive is named iPhoneOS16.5.sdk but its SDKSettings
+          # version is 16.4. Validate both facts instead of expecting the
+          # folder name and internal SDK version to be identical.
+          [[ "$RESOLVED_SDK_VERSION" == "16.4" ]]
+          [[ "$(basename "$RESOLVED_SDK_PATH")" == "iPhoneOS16.5.sdk" ]]
           [[ "$(cd "$RESOLVED_SDK_PATH" && pwd -P)" == "$(cd "$IOS_SDK_PATH" && pwd -P)" ]]
 
           BUILD_SETTINGS="$(xcodebuild \
@@ -261,3 +291,18 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+
+      - name: Restore Xcode platform metadata
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${XCODE_PLATFORM_INFO_PLIST:-}" && -f "${XCODE_PLATFORM_INFO_BACKUP:-}" ]]; then
+            sudo cp "$XCODE_PLATFORM_INFO_BACKUP" "$XCODE_PLATFORM_INFO_PLIST"
+            plutil -lint "$XCODE_PLATFORM_INFO_PLIST"
+            echo "Restored original Xcode iPhoneOS platform metadata."
+          fi
+          if [[ -n "${XCODE_SDK_LINK:-}" && -L "$XCODE_SDK_LINK" ]]; then
+            sudo rm -f "$XCODE_SDK_LINK"
+            echo "Removed temporary iPhoneOS16.5.sdk registration."
+          fi
