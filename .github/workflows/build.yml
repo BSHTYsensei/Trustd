@@ -136,11 +136,25 @@ jobs:
           test -d "$SOURCE_DIR/Hoshino.xcodeproj"
           test -f "$SOURCE_DIR/Hoshino/Entitlements/TrollStore.entitlements"
 
-      - name: Run host-side tests
+      - name: Run host-side tests (root PTY and RPC coverage)
         working-directory: ${{ github.workspace }}/Hoshino-src
+        shell: bash
         run: |
           set -euo pipefail
-          make smoke
+
+          # RootHelper's PTY smoke test intentionally verifies the root shell
+          # path. A normal macOS runner user causes /usr/bin/su to prompt for
+          # an interactive password, which CI cannot provide. GitHub-hosted
+          # macOS runners grant passwordless sudo, so run the host suite as
+          # root and fail immediately rather than waiting for a password.
+          restore_build_ownership() {
+            if [[ -d build ]]; then
+              sudo -n chown -R "$(id -u):$(id -g)" build || true
+            fi
+          }
+          trap restore_build_ownership EXIT
+
+          sudo -n -E make smoke
 
       - name: Verify Xcode resolves the exact iOS 16.5 SDK
         working-directory: ${{ github.workspace }}/Hoshino-src
