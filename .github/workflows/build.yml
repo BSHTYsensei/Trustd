@@ -16,8 +16,8 @@ concurrency:
 
 jobs:
   build-tipa:
-    name: Build TrollStore TIPA only
-    # Hoshino's Makefile requires iPhoneOS SDK 27.1 or newer.
+    name: Build Hoshino TIPA only
+    # This runner label is required: macos-latest may select an older Xcode.
     runs-on: xcode-27
     timeout-minutes: 180
 
@@ -36,82 +36,112 @@ jobs:
           }
           unzip -t "$archive"
 
-          temp_dir="$RUNNER_TEMP/hoshino-source"
-          rm -rf "$temp_dir"
-          mkdir -p "$temp_dir"
-          unzip -q "$archive" -d "$temp_dir"
+          extract_root="$RUNNER_TEMP/Hoshino-source"
+          rm -rf "$extract_root"
+          mkdir -p "$extract_root"
+          unzip -q "$archive" -d "$extract_root"
 
-          source_root="$temp_dir/Hoshino"
+          source_root="$extract_root/Hoshino"
           test -f "$source_root/Makefile" || {
             echo "::error::Hoshino.zip must contain Hoshino/Makefile."
-            find "$temp_dir" -maxdepth 3 -print
+            find "$extract_root" -maxdepth 3 -print
             exit 1
           }
-          test -d "$source_root/Fila.xcodeproj" || {
-            echo "::error::Fila.xcodeproj was not found in the Hoshino source."
+          test -f "$source_root/Hoshino.xcodeproj/project.pbxproj" || {
+            echo "::error::Hoshino.xcodeproj/project.pbxproj is missing from Hoshino.zip."
+            find "$extract_root" -maxdepth 4 -name '*.xcodeproj' -print
             exit 1
           }
+          test -f "$source_root/Hoshino.xcodeproj/xcshareddata/xcschemes/Hoshino.xcscheme"
+          test -d "$source_root/Hoshino"
+          grep -Fq 'PROJECT             := $(ROOT_DIR)/Hoshino.xcodeproj' "$source_root/Makefile"
+          grep -Fq 'SCHEME              := Hoshino' "$source_root/Makefile"
+          echo "Verified project: $source_root/Hoshino.xcodeproj"
+          echo "HOSHINO_SOURCE_ROOT=$source_root" >> "$GITHUB_ENV"
 
-          rsync -a --delete \
-            --exclude='.git/' \
-            --exclude='Hoshino.zip' \
-            "$source_root/" "$GITHUB_WORKSPACE/"
-
-          test -f "$GITHUB_WORKSPACE/Makefile"
-          echo "Source extracted to repository root."
-
-      - name: Select Xcode and verify required iOS SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo xcode-select -s /Applications/Xcode_27.1.app/Contents/Developer
-          xcodebuild -version
-          sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
-          echo "iPhoneOS SDK: $sdk_version"
-          if [[ "$(printf '%s\n' 27.1 "$sdk_version" | sort -V | head -n1)" != "27.1" ]]; then
-            echo "::error::Hoshino requires iPhoneOS SDK 27.1 or newer; found $sdk_version."
-            exit 1
-          fi
-
-      - name: Run host-side test harness
-        shell: bash
-        run: |
-          set -euo pipefail
-          make harness
-
-      - name: Compile and package TIPA only
-        shell: bash
-        env:
-          DERIVED_DATA: ${{ runner.temp }}/hoshino-derived
-        run: |
-          set -euo pipefail
-          # The Makefile's tipa target builds the full Hoshino composition
-          # and invokes package-ipa.sh in TrollStore (tipa) mode.
-          # It does not build .deb or .ipa packages.
-          make tipa DERIVED_DATA="$DERIVED_DATA"
-
-      - name: Verify TIPA output and generate checksum
+      - name: Select installed Xcode 27.x and verify iOS SDK
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-          tipas=(build/Packages/*.tipa)
-          if (( ${#tipas[@]} != 1 )); then
-            echo "::error::Expected exactly one .tipa, found ${#tipas[@]}."
-            find build/Packages -maxdepth 1 -type f -print 2>/dev/null || true
+          xcode_apps=(/Applications/Xcode_27*.app)
+          if (( ${#xcode_apps[@]} == 0 )); then
+            echo "::error::No Xcode 27.x installation was found on the xcode-27 runner."
+            ls -1 /Applications | grep -E '^Xcode' || true
             exit 1
           fi
-          file="${tipas[0]}"
-          unzip -t "$file"
-          shasum -a 256 "$file" > build/Packages/SHA256SUMS
-          cat build/Packages/SHA256SUMS
+
+          # Do not pin a patch-level app path: GitHub updates the Xcode image.
+          xcode_app="$(printf '%s\n' "${xcode_apps[@]}" | sort -V | tail -n 1)"
+          export DEVELOPER_DIR="$xcode_app/Contents/Developer"
+          sudo xcode-select -s "$DEVELOPER_DIR"
+          xcodebuild -version
+          xcode_version="$(xcodebuild -version | awk '/^Xcode / { print $2; exit }')"
+          [[ "$xcode_version" == 27.* ]] || {
+            echo "::error::Expected Xcode 27.x, selected $xcode_version."
+            exit 1
+          }
+
+          sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "Selected iPhoneOS SDK: $sdk_version"
+          python3 -c 'import sys; v=tuple(map(int,sys.argv[1].split("."))); sys.exit(0 if v >= (27,1) else 1)' "$sdk_version" || {
+            echo "::error::Hoshino requires iPhoneOS SDK 27.1 or newer; found $sdk_version."
+            exit 1
+          }
+
+      - name: Run source tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$HOSHINO_SOURCE_ROOT"
+          python3 -m unittest discover -s Scripts/Tests -v
+
+      - name: Install TrollStore packaging tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install ldid dpkg
+          command -v ldid
+          command -v dpkg-deb
+
+      - name: Build and package TIPA only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$HOSHINO_SOURCE_ROOT"
+          version="$(make --no-print-directory print-version)"
+          build_number="$(( GITHUB_RUN_NUMBER + 100 ))"
+          make set-version VERSION="$version" BUILD="$build_number"
+          make tipa DERIVED_DATA="$RUNNER_TEMP/hoshino-derived-data"
+
+          tipa_path="$(make --no-print-directory print-tipa-path)"
+          test -f "$tipa_path" || {
+            echo "::error::TIPA output was not produced: $tipa_path"
+            find build -maxdepth 4 -type f -print || true
+            exit 1
+          }
+          unzip -t "$tipa_path"
+          unzip -Z1 "$tipa_path" | grep -Fxq "Payload/Hoshino.app/Info.plist"
+          unzip -Z1 "$tipa_path" | grep -Fxq "Payload/Hoshino.app/Hoshino"
+
+          # Confirm the packaged bundle's visible and executable names.
+          unzip -p "$tipa_path" Payload/Hoshino.app/Info.plist > "$RUNNER_TEMP/Hoshino-Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$RUNNER_TEMP/Hoshino-Info.plist" | grep -Fxq Hoshino
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$RUNNER_TEMP/Hoshino-Info.plist" | grep -Fxq Hoshino
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$RUNNER_TEMP/Hoshino-Info.plist" | grep -Fxq com.hoshino.filemanager
+
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp "$tipa_path" "$GITHUB_WORKSPACE/artifacts/"
+          cd "$GITHUB_WORKSPACE/artifacts"
+          shasum -a 256 ./*.tipa > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Upload TIPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: Hoshino-TrollStore-${{ github.sha }}
           path: |
-            build/Packages/*.tipa
-            build/Packages/SHA256SUMS
+            artifacts/*.tipa
+            artifacts/SHA256SUMS
           if-no-files-found: error
           retention-days: 30
